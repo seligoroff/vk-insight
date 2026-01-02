@@ -59,7 +59,9 @@ make vk-groups-file
 resources/
 └── vk-groups.csv          # Список групп (создается вручную)
 
-storage/app/
-└── cache-resources.json   # Кеш результатов vk:check (создается автоматически)
+database/
+└── database.sqlite        # SQLite база данных (создается автоматически)
+                           # Содержит таблицы: vk_posts, vk_check_cache
 ```
+
 

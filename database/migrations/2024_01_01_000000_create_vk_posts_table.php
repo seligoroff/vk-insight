@@ -42,3 +42,4 @@ class CreateVkPostsTable extends Migration
     }
 }
 
+

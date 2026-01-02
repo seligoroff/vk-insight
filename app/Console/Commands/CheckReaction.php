@@ -4,7 +4,8 @@ namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
 use Illuminate\Support\Str;
-use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use App\Services\VkApi\VkWallService;
 use App\Services\VkApi\VkGroupService;
 use App\Models\Resource;
@@ -51,9 +52,17 @@ class CheckReaction extends Command
         }        
         $wallService = new VkWallService();
         $data = [];
-        if (!$this->option('cached') || !Storage::disk('local')->exists('cache-resources.json')) {
+        
+        // Проверяем, нужно ли использовать кэш из БД
+        $useCache = $this->option('cached') && $this->hasCacheInDatabase();
+        
+        if (!$useCache) {
+            // Очищаем старый кэш перед созданием нового
+            $this->clearCache();
+            
             $progressbar = $this->output->createProgressBar(count($list));
             $progressbar->start();
+            
             foreach ($list as $name) {
                 try {
                     $meta  = VkGroupService::resolveName($name);
@@ -72,12 +81,23 @@ class CheckReaction extends Command
                         break;
                     }
                 }
+                
+                $postText = Str::limit($post->text, 40);
+                $groupName = $group->name;
+                $groupId = $meta->object_id;
+                $likes = $post->likes->count ?? 0;
+                $reposts = $post->reposts->count ?? 0;
+                
+                // Сохраняем в БД
+                $this->saveToCache($groupName, $groupId, $postText, $likes, $reposts);
+                
+                // Добавляем в массив для вывода
                 $data[] = [
-                    Str::limit($post->text, 40),
-                    $group->name,
-                    $meta->object_id,
-                    $post->likes->count,
-                    $post->reposts->count
+                    $postText,
+                    $groupName,
+                    $groupId,
+                    $likes,
+                    $reposts
                 ];             
                 $progressbar->advance();
                 if ($this->option('delay')) {
@@ -85,11 +105,97 @@ class CheckReaction extends Command
                 }
             }
             $progressbar->finish();
-            Storage::disk('local')->put('cache-resources.json', json_encode($data));            
         } else {
-            $data = json_decode(Storage::disk('local')->get('cache-resources.json'));
+            // Загружаем данные из БД
+            $data = $this->loadFromCache();
         }
         
         $this->table(['Post', 'Group name', 'Group ID', 'Likes', 'Reposts'], $data);
+        
+        return 0;
+    }
+
+    /**
+     * Проверить, есть ли кэш в БД
+     *
+     * @return bool
+     */
+    private function hasCacheInDatabase(): bool
+    {
+        if (!Schema::hasTable('vk_check_cache')) {
+            return false;
+        }
+        
+        return DB::table('vk_check_cache')->exists();
+    }
+
+    /**
+     * Очистить кэш в БД
+     *
+     * @return void
+     */
+    private function clearCache(): void
+    {
+        if (Schema::hasTable('vk_check_cache')) {
+            DB::table('vk_check_cache')->truncate();
+        }
+    }
+
+    /**
+     * Сохранить данные в кэш БД
+     *
+     * @param string $groupName
+     * @param int $groupId
+     * @param string $postText
+     * @param int $likes
+     * @param int $reposts
+     * @return void
+     */
+    private function saveToCache(string $groupName, int $groupId, string $postText, int $likes, int $reposts): void
+    {
+        if (!Schema::hasTable('vk_check_cache')) {
+            $this->warn('Таблица vk_check_cache не существует. Запустите миграцию: php artisan migrate');
+            return;
+        }
+
+        DB::table('vk_check_cache')->insert([
+            'group_name' => $groupName,
+            'group_id' => $groupId,
+            'post_text' => $postText,
+            'likes' => $likes,
+            'reposts' => $reposts,
+            'cached_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    /**
+     * Загрузить данные из кэша БД
+     *
+     * @return array
+     */
+    private function loadFromCache(): array
+    {
+        if (!Schema::hasTable('vk_check_cache')) {
+            return [];
+        }
+
+        $cacheData = DB::table('vk_check_cache')
+            ->orderBy('cached_at', 'desc')
+            ->get();
+
+        $data = [];
+        foreach ($cacheData as $row) {
+            $data[] = [
+                $row->post_text,
+                $row->group_name,
+                $row->group_id,
+                $row->likes,
+                $row->reposts
+            ];
+        }
+
+        return $data;
     }
 }
