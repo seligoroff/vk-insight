@@ -13,14 +13,14 @@ class GroupsInfo extends Command
      *
      * @var string
      */
-    protected $signature = 'vk:groups:info';
+    protected $signature = 'vk:groups-info';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Получение информации о группах из списка resources.csv';
+    protected $description = 'Получение информации о группах из списка vk-groups.csv';
 
     /**
      * Execute the console command.
@@ -29,10 +29,15 @@ class GroupsInfo extends Command
      */
     public function handle()
     {
-        $list = Resource::getList();
+        try {
+            $list = Resource::getList();
+        } catch (\RuntimeException $e) {
+            $this->error($e->getMessage());
+            return 1;
+        }
         
         if (empty($list)) {
-            $this->error('Список групп пуст. Убедитесь, что файл storage/app/resources.csv существует и содержит данные.');
+            $this->warn('Список групп пуст. Убедитесь, что файл resources/vk-groups.csv содержит данные.');
             return 1;
         }
         

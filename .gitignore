@@ -7,6 +7,9 @@
 .env.backup
 .env.*.local
 
+# User configuration files
+/resources/vk-groups.csv
+
 # Storage & Logs
 /storage/*.key
 /storage/app/*

@@ -16,7 +16,7 @@ class GetPosts extends Command
      *
      * @var string
      */
-    protected $signature = 'vk:posts:get 
+    protected $signature = 'vk:posts-get 
                             {--owner= : ID владельца стены (обязательный, отрицательное число для групп)}
                             {--from= : Дата начала периода (обязательный)}
                             {--to= : Дата окончания периода (опциональный, по умолчанию текущая дата)}
@@ -483,6 +483,10 @@ class GetPosts extends Command
                     }
                 } catch (\Exception $e) {
                     $skipped++;
+                    // Логируем ошибку для отладки (можно закомментировать в продакшене)
+                    if ($this->option('verbose')) {
+                        $this->warn("Ошибка при сохранении поста ID {$post->id}: " . $e->getMessage());
+                    }
                 }
                 $progressBar->advance();
             }

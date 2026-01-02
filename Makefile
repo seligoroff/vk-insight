@@ -1,4 +1,4 @@
-.PHONY: help install update setup env-file migrate migrate-fresh test clean key-generate optimize clear-cache vk-check vk-groups-info
+.PHONY: help install update setup env-file vk-groups-file migrate migrate-fresh test clean key-generate optimize clear-cache vk-check vk-groups-info
 
 # Цвета для вывода
 GREEN  := $(shell tput -Txterm setaf 2)
@@ -26,9 +26,21 @@ env-file: ## Создать .env файл из .env.example (если не су�
 		echo "$(YELLOW).env файл уже существует$(RESET)"; \
 	fi
 
-setup: env-file install key-generate migrate ## Полная настройка проекта (env + install + key + migrate)
+vk-groups-file: ## Создать файл vk-groups.csv (если не существует)
+	@if [ ! -f resources/vk-groups.csv ]; then \
+		echo "$(GREEN)Создание файла vk-groups.csv...$(RESET)"; \
+		touch resources/vk-groups.csv; \
+		echo "$(GREEN)✓ Файл resources/vk-groups.csv создан$(RESET)"; \
+		echo "$(YELLOW)Не забудьте добавить URL групп в файл (по одному на строку)!$(RESET)"; \
+		echo "$(YELLOW)Пример: https://vk.com/groupname1$(RESET)"; \
+	else \
+		echo "$(YELLOW)Файл resources/vk-groups.csv уже существует$(RESET)"; \
+	fi
+
+setup: env-file install key-generate migrate vk-groups-file ## Полная настройка проекта (env + install + key + migrate + vk-groups.csv)
 	@echo "$(GREEN)✓ Проект настроен и готов к работе!$(RESET)"
 	@echo "$(YELLOW)Не забудьте настроить VK_TOKEN в .env файле!$(RESET)"
+	@echo "$(YELLOW)Не забудьте добавить URL групп в resources/vk-groups.csv!$(RESET)"
 
 key-generate: ## Сгенерировать ключ приложения
 	@echo "$(GREEN)Генерация ключа приложения...$(RESET)"
@@ -62,16 +74,16 @@ optimize: ## Оптимизировать приложение (кеш конф�
 	php artisan route:cache
 
 # Команды для работы с VK API
-vk-check: ## Проверить последние посты в группах из resources.csv
+vk-check: ## Проверить последние посты в группах из vk-groups.csv
 	php artisan vk:check
 
-vk-groups-info: ## Получить информацию о группах из resources.csv
-	php artisan vk:groups:info
+vk-groups-info: ## Получить информацию о группах из vk-groups.csv
+	php artisan vk:groups-info
 
 # Примеры использования команд VK (можно раскомментировать и настроить)
 # vk-posts-get: ## Получить посты за период (пример: make vk-posts-get OWNER=-12345678 FROM=2024-01-01 TO=2024-01-31)
-# 	php artisan vk:posts:get --owner=$(OWNER) --from=$(FROM) --to=$(TO)
+# 	php artisan vk:posts-get --owner=$(OWNER) --from=$(FROM) --to=$(TO)
 
 # vk-posts-get-db: ## Получить посты и сохранить в БД (пример: make vk-posts-get-db OWNER=-12345678 FROM=2024-01-01)
-# 	php artisan vk:posts:get --owner=$(OWNER) --from=$(FROM) --db
+# 	php artisan vk:posts-get --owner=$(OWNER) --from=$(FROM) --db
 

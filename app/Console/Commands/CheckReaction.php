@@ -43,7 +43,12 @@ class CheckReaction extends Command
      */
     public function handle()
     {
-        $list = Resource::getList();        
+        try {
+            $list = Resource::getList();
+        } catch (\RuntimeException $e) {
+            $this->error($e->getMessage());
+            return 1;
+        }        
         $wallService = new VkWallService();
         $data = [];
         if (!$this->option('cached') || !Storage::disk('local')->exists('cache-resources.json')) {
