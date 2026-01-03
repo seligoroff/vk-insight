@@ -27,13 +27,25 @@ class VkGroupService extends VkApiClient
      * Get group information by ID
      * 
      * @param int|string $groupId Group ID
+     * @param array $fields Additional fields to return (e.g., ['members_count', 'description'])
      * @return array|null
      */
-    public static function getById($groupId)
+    public static function getById($groupId, array $fields = [])
     {
-        $response = self::apiGet('groups.getById', [
-            'group_id' => $groupId
-        ]);
+        $params = ['group_id' => $groupId];
+        
+        if (!empty($fields)) {
+            // Валидация: fields должен быть массивом строк
+            $validFields = array_filter($fields, function($field) {
+                return is_string($field) && !empty(trim($field));
+            });
+            
+            if (!empty($validFields)) {
+                $params['fields'] = implode(',', $validFields);
+            }
+        }
+        
+        $response = self::apiGet('groups.getById', $params);
         
         $data = self::parseResponse($response);
         return $data[0] ?? null;

@@ -70,5 +70,64 @@ php artisan vk:posts-get --owner=-11111111 --from=2024-01-01 --db --update
 php artisan vk:posts-get --owner=-11111111 --from=2024-01-01 --db --clear
 ```
 
+## Анализ эффективности постов
+
+```bash
+# Базовый анализ за месяц
+php artisan vk:analytics --owner=-12345678
+
+# Анализ за неделю с определением лучшего времени публикации
+php artisan vk:analytics --owner=-12345678 --period=week --best-time
+
+# Анализ с сравнением с предыдущим месяцем
+php artisan vk:analytics --owner=-12345678 --period=month --compare=previous
+
+# Анализ за произвольный период
+php artisan vk:analytics --owner=-12345678 --period=2024-01-01:2024-01-31
+
+# Анализ с топ-5 постов по ER
+php artisan vk:analytics --owner=-12345678 --top=5 --metrics=er
+
+# Анализ с фильтрацией по минимальной вовлеченности (10+ реакций)
+php artisan vk:analytics --owner=-12345678 --min-engagement=10
+
+# Экспорт результатов в JSON
+php artisan vk:analytics --owner=-12345678 --format=json --output=analytics.json
+
+# Экспорт в CSV (создаст несколько файлов в директории reports/)
+php artisan vk:analytics --owner=-12345678 --format=csv --output=reports/analytics.csv
+
+# Полный анализ с всеми опциями
+php artisan vk:analytics \
+  --owner=-12345678 \
+  --period=month \
+  --compare=previous \
+  --best-time \
+  --top=10 \
+  --metrics=all \
+  --timezone=Europe/Moscow \
+  --format=table
+
+# Еженедельный автоматический отчет (можно добавить в cron)
+php artisan vk:analytics \
+  --owner=-12345678 \
+  --period=week \
+  --compare=previous \
+  --format=json \
+  --output=/path/to/weekly_report_$(date +\%Y\%m\%d).json
+```
+
+**Примеры интерпретации результатов:**
+
+1. **ER по дням недели** - показывает, в какие дни недели посты получают больше вовлеченности. Используйте это для планирования публикаций.
+
+2. **Лучшее время публикации** - показывает часы с наивысшим средним ER. Рекомендуется публиковать в часы, отмеченные как "⭐ Лучшее" или "⭐ Хорошее".
+
+3. **Топ-посты** - анализируйте топ-посты по разным метрикам, чтобы понять, какой контент работает лучше всего.
+
+4. **Сравнение периодов** - отслеживайте динамику:
+   - ⬆️ - рост более 5%
+   - ➡️ - стабильно (от -5% до +5%)
+   - ⬇️ - падение более 5%
 
 

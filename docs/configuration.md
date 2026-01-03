@@ -18,7 +18,18 @@ VK_TOKEN=ваш_токен_vk_api
 VK_API_VERSION=5.122
 VK_VERIFY_SSL=false
 VK_ACCOUNT_BASE_URL=https://vk.com
+VK_ANALYTICS_TIMEZONE=Europe/Moscow
 ```
+
+### Параметры VK API
+
+- `VK_TOKEN` - токен доступа VK API (обязательный)
+- `VK_API_VERSION` - версия API (по умолчанию: 5.122)
+- `VK_VERIFY_SSL` - проверка SSL сертификатов (по умолчанию: false)
+- `VK_ACCOUNT_BASE_URL` - базовый URL аккаунта для генерации ссылок (по умолчанию: https://vk.com)
+- `VK_ANALYTICS_TIMEZONE` - таймзона для аналитики (по умолчанию: используется `APP_TIMEZONE` или UTC)
+
+**Примечание:** `VK_ANALYTICS_TIMEZONE` используется командой `vk:analytics` для группировки постов по часам и дням недели. Для российских групп рекомендуется указать `Europe/Moscow`. Если не указано, используется таймзона из `APP_TIMEZONE` или UTC.
 
 ## Подготовка списка групп
 

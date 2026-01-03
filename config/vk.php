@@ -50,5 +50,23 @@ return [
 
     'account_base_url' => env('VK_ACCOUNT_BASE_URL', 'https://vk.com'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Analytics Timezone
+    |--------------------------------------------------------------------------
+    |
+    | Default timezone for analytics commands (vk:analytics).
+    | Used for grouping posts by hour and day of week.
+    | If not set, falls back to app.timezone (default: UTC).
+    |
+    | Examples:
+    | - Europe/Moscow (UTC+3)
+    | - Europe/Kiev (UTC+2)
+    | - Asia/Almaty (UTC+6)
+    |
+    */
+
+    'analytics_timezone' => env('VK_ANALYTICS_TIMEZONE', null),
+
 ];
 
