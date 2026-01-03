@@ -1306,6 +1306,16 @@ class Analytics extends Command
         $output .= "**Период:** {$data['period']['from']} - {$data['period']['to']}\n\n";
         $output .= "**Подписчиков:** " . number_format($data['members_count'], 0, ',', ' ') . "\n\n";
         
+        // Ключевые инсайты
+        $insights = $this->generateInsights($data);
+        if (!empty($insights)) {
+            $output .= "## 📌 Ключевые инсайты\n\n";
+            foreach ($insights as $insight) {
+                $output .= "- {$insight}\n";
+            }
+            $output .= "\n";
+        }
+        
         // Общая статистика
         $summary = $data['summary'];
         $output .= "## Общая статистика\n\n";
@@ -1335,36 +1345,7 @@ class Analytics extends Command
         
         // Лучшее время публикации
         if (!empty($data['best_time'])) {
-            $output .= "## Лучшее время публикации\n\n";
-            
-            // Предупреждение о малом количестве постов для рекомендаций
-            $totalPosts = array_sum(array_column($data['best_time'], 'posts_count'));
-            $minPostsForReliability = max(10, (int)($totalPosts * 0.05)); // Минимум 10 постов или 5% от общего количества
-            
-            $output .= "| Час | Постов | Средний ER | Рекомендация |\n";
-            $output .= "|-----|--------|------------|--------------|\n";
-            foreach ($data['best_time'] as $index => $hour) {
-                $postsCount = $hour['posts_count'];
-                
-                // Определяем рекомендацию с учетом количества постов
-                $recommendation = '⚠️ Среднее';
-                if ($index === 0 && $postsCount >= $minPostsForReliability) {
-                    $recommendation = '⭐ Лучшее';
-                } elseif ($index < 3 && $postsCount >= $minPostsForReliability) {
-                    $recommendation = '⭐ Хорошее';
-                } elseif ($index < 3 && $postsCount < $minPostsForReliability) {
-                    $recommendation = '⚠️ Мало данных';
-                }
-                
-                $erDisplay = $hour['avg_er'] > 0 ? $hour['avg_er'] . '%' : 'N/A';
-                $output .= "| {$hour['hour']}:00 | {$postsCount} | {$erDisplay} | {$recommendation} |\n";
-            }
-            $output .= "\n";
-            
-            // Добавляем примечание о статистической значимости
-            if (!empty($data['best_time']) && $data['best_time'][0]['posts_count'] < $minPostsForReliability) {
-                $output .= "> ⚠️ **Примечание:** Для надежных рекомендаций рекомендуется минимум {$minPostsForReliability} постов в час. Текущие данные могут быть недостаточно репрезентативными.\n\n";
-            }
+            $output .= $this->formatBestTimeSection($data['best_time']);
         }
         
         // Топ-посты
@@ -1493,6 +1474,281 @@ class Analytics extends Command
             
             $output .= "| Количество постов | {$comp['current']['total_posts']} | {$comp['previous']['total_posts']} | ";
             $output .= $formatValue($comp['changes']['total_posts']['percent'], true) . ' ' . $comp['changes']['total_posts']['trend'] . " |\n\n";
+        }
+        
+        // Сравнение с бенчмарками
+        $output .= $this->formatBenchmarkComparison($data);
+        
+        // Рекомендации для улучшения
+        $recommendations = $this->generateRecommendations($data);
+        if (!empty($recommendations)) {
+            $output .= "## 💡 Рекомендации для улучшения\n\n";
+            $output .= "### На основе анализа данных:\n\n";
+            foreach ($recommendations as $index => $rec) {
+                $output .= ($index + 1) . ". **{$rec['title']}**\n";
+                $output .= "   - {$rec['reason']}\n";
+                $output .= "   - {$rec['action']}\n\n";
+            }
+        }
+        
+        return $output;
+    }
+
+    /**
+     * Генерация ключевых инсайтов
+     *
+     * @param array $data
+     * @return array
+     */
+    private function generateInsights(array $data): array
+    {
+        $insights = [];
+        $summary = $data['summary'];
+        $membersCount = $data['members_count'];
+        $avgER = $summary['avg_er'] ?? 0;
+        
+        // Сравнение с бенчмарком
+        if ($avgER > 5) {
+            $insights[] = "✅ **Отличный ER:** " . number_format($avgER, 2) . "% — это выше среднего для большинства индустрий";
+        } elseif ($avgER >= 2) {
+            $insights[] = "✅ **ER в норме:** " . number_format($avgER, 2) . "% — хороший показатель для вашей аудитории";
+        } elseif ($avgER > 0) {
+            $insights[] = "⚠️ **ER ниже среднего:** " . number_format($avgER, 2) . "% — есть потенциал для роста";
+        }
+        
+        // Лучший день недели
+        if (!empty($data['er_by_day'])) {
+            $erByDay = collect($data['er_by_day'])->sortByDesc('avg_er');
+            $bestDay = $erByDay->first();
+            $avgDayER = $erByDay->avg('avg_er');
+            
+            if ($bestDay && $avgDayER > 0) {
+                $improvement = (($bestDay['avg_er'] - $avgDayER) / $avgDayER) * 100;
+                if ($improvement > 5) {
+                    $insights[] = "📅 **Лучший день:** {$bestDay['day_name']} показывает на " . 
+                                  round($improvement) . "% выше средний ER (" . 
+                                  number_format($bestDay['avg_er'], 2) . "% vs " . 
+                                  number_format($avgDayER, 2) . "%)";
+                }
+            }
+        }
+        
+        // Лучшее время публикации
+        if (!empty($data['best_time']) && count($data['best_time']) > 0) {
+            $topHour = $data['best_time'][0];
+            if ($topHour['avg_er'] > 0) {
+                $topHours = array_slice($data['best_time'], 0, 3);
+                $hoursList = array_map(function($h) {
+                    return $h['hour'] . ':00';
+                }, $topHours);
+                $insights[] = "⏰ **Лучшее время:** " . implode(', ', $hoursList) . 
+                              " показывают самый высокий ER (до " . 
+                              number_format($topHour['avg_er'], 2) . "%)";
+            }
+        }
+        
+        // Топ-контент
+        if (!empty($data['top_posts']['er']) && count($data['top_posts']['er']) > 0) {
+            $topPost = $data['top_posts']['er'][0];
+            if ($topPost['er'] > 0) {
+                $insights[] = "🏆 **Топ-контент:** Посты с ER " . number_format($topPost['er'], 2) . 
+                              "% генерируют наибольшую вовлеченность";
+            }
+        }
+        
+        return $insights;
+    }
+
+    /**
+     * Форматирование секции "Лучшее время публикации" с топ-3
+     *
+     * @param array $bestTimeData
+     * @return string
+     */
+    private function formatBestTimeSection(array $bestTimeData): string
+    {
+        $output = "## ⏰ Лучшее время публикации\n\n";
+        
+        // Всегда показываем топ-3, даже если данных мало
+        $top3 = array_slice($bestTimeData, 0, 3);
+        $totalPosts = array_sum(array_column($bestTimeData, 'posts_count'));
+        $minPostsForReliability = max(10, (int)($totalPosts * 0.05));
+        
+        if (!empty($top3)) {
+            $output .= "### 🌟 Топ-3 часа (по среднему ER)\n\n";
+            $output .= "| Час | Постов | Средний ER | Статус |\n";
+            $output .= "|-----|--------|------------|--------|\n";
+            
+            foreach ($top3 as $item) {
+                $status = $item['posts_count'] < $minPostsForReliability 
+                    ? "⚠️ Мало данных (< {$minPostsForReliability} постов)" 
+                    : "✅ Достаточно данных";
+                $erDisplay = $item['avg_er'] > 0 ? number_format($item['avg_er'], 2) . '% ⭐' : 'N/A';
+                $output .= "| {$item['hour']}:00 | {$item['posts_count']} | {$erDisplay} | {$status} |\n";
+            }
+            $output .= "\n";
+            
+            // Рекомендация
+            $output .= "> 💡 **Рекомендация:** ";
+            if ($top3[0]['posts_count'] < $minPostsForReliability) {
+                $output .= "Публикуйте важные посты в {$top3[0]['hour']}:00 или {$top3[1]['hour']}:00. ";
+                $output .= "Однако учтите, что данных пока недостаточно для статистически значимых выводов. ";
+                $output .= "Продолжайте публиковать в эти часы и накапливайте данные.\n\n";
+            } else {
+                $output .= "Оптимальное время для публикаций: {$top3[0]['hour']}:00-{$top3[2]['hour']}:00.\n\n";
+            }
+        }
+        
+        // Полная таблица всех часов
+        $output .= "### Все часы (с минимум 3 постами)\n\n";
+        $output .= "| Час | Постов | Средний ER | Рекомендация |\n";
+        $output .= "|-----|--------|------------|--------------|\n";
+        
+        foreach ($bestTimeData as $index => $hour) {
+            $postsCount = $hour['posts_count'];
+            
+            // Определяем рекомендацию
+            $recommendation = '⚠️ Среднее';
+            if ($index === 0 && $postsCount >= $minPostsForReliability) {
+                $recommendation = '⭐ Лучшее';
+            } elseif ($index < 3 && $postsCount >= $minPostsForReliability) {
+                $recommendation = '⭐ Хорошее';
+            } elseif ($index < 3 && $postsCount < $minPostsForReliability) {
+                $recommendation = '⚠️ Мало данных';
+            }
+            
+            $erDisplay = $hour['avg_er'] > 0 ? number_format($hour['avg_er'], 2) . '%' : 'N/A';
+            $output .= "| {$hour['hour']}:00 | {$postsCount} | {$erDisplay} | {$recommendation} |\n";
+        }
+        $output .= "\n";
+        
+        return $output;
+    }
+
+    /**
+     * Генерация рекомендаций для улучшения
+     *
+     * @param array $data
+     * @return array
+     */
+    private function generateRecommendations(array $data): array
+    {
+        $recommendations = [];
+        $summary = $data['summary'];
+        
+        // На основе дня недели
+        if (!empty($data['er_by_day'])) {
+            $erByDay = collect($data['er_by_day'])->sortByDesc('avg_er');
+            $bestDay = $erByDay->first();
+            $avgDayER = $erByDay->avg('avg_er');
+            
+            if ($bestDay && $avgDayER > 0) {
+                $improvement = (($bestDay['avg_er'] - $avgDayER) / $avgDayER) * 100;
+                if ($improvement > 10) {
+                    $recommendations[] = [
+                        'title' => "Увеличить частоту публикаций в {$bestDay['day_name']}",
+                        'reason' => "Текущий ER в {$bestDay['day_name']} на " . round($improvement) . "% выше среднего (" . 
+                                   number_format($bestDay['avg_er'], 2) . "% vs " . number_format($avgDayER, 2) . "%)",
+                        'action' => "Рекомендация: публиковать 2-3 поста в {$bestDay['day_name']} вместо текущего количества ({$bestDay['posts_count']} постов)"
+                    ];
+                }
+            }
+        }
+        
+        // На основе лучшего времени
+        if (!empty($data['best_time']) && count($data['best_time']) > 0) {
+            $topHours = array_slice($data['best_time'], 0, 3);
+            $topHour = $topHours[0];
+            
+            if ($topHour['posts_count'] >= 10) {
+                $hoursList = array_map(function($h) {
+                    return $h['hour'] . ':00';
+                }, $topHours);
+                $recommendations[] = [
+                    'title' => "Оптимизировать время публикации",
+                    'reason' => "Утро (" . $topHours[0]['hour'] . ":00) и вечер (" . 
+                               ($topHours[1]['hour'] ?? $topHours[0]['hour']) . ":00) показывают лучшие результаты",
+                    'action' => "Рекомендация: важные анонсы публиковать в " . $topHours[0]['hour'] . 
+                               ":00, развлекательный контент — вечером"
+                ];
+            }
+        }
+        
+        // На основе топ-постов (анализ комментариев)
+        if (!empty($data['top_posts']['comments']) && count($data['top_posts']['comments']) > 0) {
+            $topCommentPost = $data['top_posts']['comments'][0];
+            $avgComments = $summary['avg_comments'] ?? 0;
+            
+            if ($topCommentPost['comments'] > $avgComments * 2 && $avgComments > 0) {
+                $recommendations[] = [
+                    'title' => "Увеличить интерактивность",
+                    'reason' => "Топ-посты получают в " . round($topCommentPost['comments'] / $avgComments, 1) . 
+                               " раз больше комментариев, чем средний пост",
+                    'action' => "Рекомендация: добавлять вопросы или call-to-action в конец постов для увеличения комментариев"
+                ];
+            }
+        }
+        
+        // Общая рекомендация по ER
+        $avgER = $summary['avg_er'] ?? 0;
+        if ($avgER > 0 && $avgER < 1.5) {
+            $recommendations[] = [
+                'title' => "Повысить вовлеченность аудитории",
+                'reason' => "Средний ER " . number_format($avgER, 2) . "% ниже среднего для культуры/искусства (2-4%)",
+                'action' => "Рекомендация: экспериментировать с типами контента, временем публикации и форматом постов"
+            ];
+        }
+        
+        return $recommendations;
+    }
+
+    /**
+     * Форматирование сравнения с бенчмарками
+     *
+     * @param array $data
+     * @return string
+     */
+    private function formatBenchmarkComparison(array $data): string
+    {
+        $output = "## 📊 Сравнение с бенчмарками\n\n";
+        
+        $summary = $data['summary'];
+        $membersCount = $data['members_count'];
+        $avgER = $summary['avg_er'] ?? 0;
+        
+        // Определяем бенчмарк для культуры/искусства (2-4%)
+        $benchmarkMin = 2.0;
+        $benchmarkMax = 4.0;
+        
+        $assessment = '';
+        if ($avgER >= $benchmarkMax) {
+            $assessment = '✅ Выше среднего';
+        } elseif ($avgER >= $benchmarkMin) {
+            $assessment = '✅ В норме';
+        } elseif ($avgER > 0) {
+            $assessment = '⚠️ Ниже среднего';
+        } else {
+            $assessment = 'N/A';
+        }
+        
+        $output .= "| Метрика | Ваш результат | Бенчмарк (Культура/Искусство) | Оценка |\n";
+        $output .= "|---------|---------------|-------------------------------|--------|\n";
+        $output .= "| Средний ER | " . number_format($avgER, 2) . "% | 2-4% | {$assessment} |\n";
+        $output .= "| Средние лайки | " . number_format($summary['avg_likes'] ?? 0, 2, '.', ' ') . " | - | - |\n";
+        $output .= "| Средние репосты | " . number_format($summary['avg_reposts'] ?? 0, 2, '.', ' ') . " | - | - |\n";
+        $output .= "| Средние комментарии | " . number_format($summary['avg_comments'] ?? 0, 2, '.', ' ') . " | - | - |\n\n";
+        
+        // Примечание о размере аудитории
+        if ($membersCount > 0) {
+            $output .= "> **Примечание:** Для группы с " . number_format($membersCount, 0, ',', ' ') . 
+                      " подписчиками ER " . number_format($avgER, 2) . "% — это ";
+            if ($membersCount > 100000) {
+                $output .= "нормальный показатель. Крупные группы обычно имеют ниже ER, чем небольшие.\n\n";
+            } elseif ($membersCount > 10000) {
+                $output .= "хороший показатель для среднего размера группы.\n\n";
+            } else {
+                $output .= "хороший показатель для небольшой группы.\n\n";
+            }
         }
         
         return $output;

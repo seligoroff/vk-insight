@@ -1,4 +1,4 @@
-# VK Utils - Консольный инструмент для работы с VK API
+# VK Insight - Консольный инструмент для работы с VK API
 
 ![PHP](https://img.shields.io/badge/PHP-8.1%2B-777BB4?style=flat-square&logo=php)
 ![Laravel](https://img.shields.io/badge/Laravel-9.x-FF2D20?style=flat-square&logo=laravel)
@@ -27,8 +27,8 @@
 
 ```bash
 # Клонируйте репозиторий
-git clone https://github.com/seligoroff/vk-utils.git
-cd vk-utils
+git clone https://github.com/seligoroff/vk-insight.git
+cd vk-insight
 
 # Установите зависимости и настройте проект
 make setup
