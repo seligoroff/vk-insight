@@ -71,7 +71,7 @@ class CheckReaction extends Command
                 try {
                     $meta  = VkGroupService::resolveName($name);
                     $wallService->setOwner("-{$meta->object_id}");
-                    $group = VkGroupService::getById($meta->object_id);
+                    $group = VkGroupService::getById($meta->object_id, ['members_count']);
                     $posts = $wallService->getPosts();
                 } catch (\Throwable $e) {
                     $this->alert($e->getMessage());
@@ -87,13 +87,14 @@ class CheckReaction extends Command
                 }
                 
                 $postText = Str::limit($post->text, 40);
-                $groupName = $group->name;
+                $groupName = is_object($group) ? $group->name : ($group['name'] ?? '');
                 $groupId = $meta->object_id;
                 $likes = $post->likes->count ?? 0;
                 $reposts = $post->reposts->count ?? 0;
+                $membersCount = is_object($group) ? ($group->members_count ?? 0) : ($group['members_count'] ?? 0);
                 
                 // Сохраняем в БД
-                $this->saveToCache($groupName, $groupId, $postText, $likes, $reposts);
+                $this->saveToCache($groupName, $groupId, $postText, $likes, $reposts, $membersCount);
                 
                 // Добавляем в массив для вывода
                 $data[] = [
@@ -101,7 +102,8 @@ class CheckReaction extends Command
                     $groupName,
                     $groupId,
                     $likes,
-                    $reposts
+                    $reposts,
+                    $membersCount
                 ];             
                 $progressbar->advance();
                 if ($this->option('delay')) {
@@ -213,9 +215,10 @@ class CheckReaction extends Command
      * @param string $postText
      * @param int $likes
      * @param int $reposts
+     * @param int $membersCount
      * @return void
      */
-    private function saveToCache(string $groupName, int $groupId, string $postText, int $likes, int $reposts): void
+    private function saveToCache(string $groupName, int $groupId, string $postText, int $likes, int $reposts, int $membersCount = 0): void
     {
         if (!Schema::hasTable('vk_check_cache')) {
             $this->warn('Таблица vk_check_cache не существует. Запустите миграцию: php artisan migrate');
@@ -228,6 +231,7 @@ class CheckReaction extends Command
             'post_text' => $postText,
             'likes' => $likes,
             'reposts' => $reposts,
+            'members_count' => $membersCount,
             'cached_at' => now(),
             'created_at' => now(),
             'updated_at' => now(),
@@ -256,7 +260,8 @@ class CheckReaction extends Command
                 $row->group_name,
                 $row->group_id,
                 $row->likes,
-                $row->reposts
+                $row->reposts,
+                $row->members_count ?? 0
             ];
         }
 
@@ -279,6 +284,7 @@ class CheckReaction extends Command
                 'group_id' => $row[2] ?? 0,
                 'likes' => $row[3] ?? 0,
                 'reposts' => $row[4] ?? 0,
+                'members_count' => $row[5] ?? 0,
             ];
         }
         return $structured;
@@ -322,10 +328,11 @@ class CheckReaction extends Command
                 $row['group_id'],
                 $row['likes'],
                 $row['reposts'],
+                number_format($row['members_count'], 0, ',', ' '),
             ];
         }
         
-        $this->table(['Post', 'Group name', 'Group ID', 'Likes', 'Reposts'], $tableData);
+        $this->table(['Post', 'Group name', 'Group ID', 'Likes', 'Reposts', 'Подписчики'], $tableData);
     }
 
     /**
@@ -344,6 +351,7 @@ class CheckReaction extends Command
                 'group_id' => $row['group_id'],
                 'likes' => $row['likes'],
                 'reposts' => $row['reposts'],
+                'members_count' => $row['members_count'],
             ];
         }
 
@@ -371,7 +379,7 @@ class CheckReaction extends Command
         fwrite($output, "\xEF\xBB\xBF");
         
         // Заголовки
-        fputcsv($output, ['post_text', 'group_name', 'group_id', 'likes', 'reposts']);
+        fputcsv($output, ['post_text', 'group_name', 'group_id', 'likes', 'reposts', 'members_count']);
 
         // Данные
         foreach ($data as $row) {
@@ -381,6 +389,7 @@ class CheckReaction extends Command
                 $row['group_id'],
                 $row['likes'],
                 $row['reposts'],
+                $row['members_count'],
             ]);
         }
 
@@ -408,8 +417,8 @@ class CheckReaction extends Command
         }
         
         $output .= "## Результаты\n\n";
-        $output .= "| Post | Group name | Group ID | Likes | Reposts |\n";
-        $output .= "|------|------------|----------|-------|----------|\n";
+        $output .= "| Post | Group name | Group ID | Likes | Reposts | Подписчики |\n";
+        $output .= "|------|------------|----------|-------|----------|------------|\n";
         
         foreach ($data as $row) {
             $postText = $row['post_text'] ?: '(без текста)';
@@ -423,12 +432,13 @@ class CheckReaction extends Command
             $groupName = str_replace('|', '\\|', $row['group_name']);
             
             $output .= sprintf(
-                "| %s | %s | %d | %d | %d |\n",
+                "| %s | %s | %d | %d | %d | %s |\n",
                 $postText,
                 $groupName,
                 $row['group_id'],
                 $row['likes'],
-                $row['reposts']
+                $row['reposts'],
+                number_format($row['members_count'], 0, ',', ' ')
             );
         }
         
