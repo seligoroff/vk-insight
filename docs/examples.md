@@ -125,6 +125,55 @@ php artisan vk:analytics \
   --output=/path/to/weekly_report_$(date +\%Y\%m\%d).json
 ```
 
+## Поиск постов по слову
+
+```bash
+# Поиск слова "концерт" за месяц через API
+php artisan vk:word концерт --owner=-12345678 --from=2024-01-01 --to=2024-01-31
+
+# Поиск в базе данных (быстрее)
+php artisan vk:word выставка --owner=-12345678 --from=2024-01-01 --db
+
+# Поиск с экспортом в JSON
+php artisan vk:word мероприятие --owner=-12345678 --from=2024-01-01 --format=json --output=word_search.json
+
+# Поиск за последний месяц с экспортом в Markdown
+php artisan vk:word конференция --owner=-12345678 --from=2024-01-01 --db --format=markdown --output=report.md
+
+# Поиск нескольких слов (по очереди) и сохранение результатов
+php artisan vk:word концерт --owner=-12345678 --from=2024-01-01 --db --format=json --output=concert_stats.json
+php artisan vk:word выставка --owner=-12345678 --from=2024-01-01 --db --format=json --output=exhibition_stats.json
+php artisan vk:word мастер-класс --owner=-12345678 --from=2024-01-01 --db --format=json --output=workshop_stats.json
+```
+
+**Примеры использования результатов:**
+- Анализ популярности тем в группе
+- Отслеживание упоминаний конкретных событий
+- Поиск контента по ключевым словам для републикации
+- Анализ реакции аудитории на определенные темы (сравнение статистики)
+
+## Проверка токена и прав доступа
+
+```bash
+# Базовая проверка токена из .env
+php artisan vk:token-check
+
+# Проверка нового токена перед использованием
+php artisan vk:token-check --token=ваш_новый_токен
+
+# Проверка прав конкретного пользователя
+php artisan vk:token-check --user-id=12345678
+
+# Сохранение информации о токене в JSON
+php artisan vk:token-check --format=json --output=token_info.json
+
+# Подробная проверка с отладочной информацией
+php artisan vk:token-check --verbose
+
+# Проверка токена с выводом в JSON для автоматизации
+php artisan vk:token-check --token=ваш_токен --format=json
+```
+
 **Примеры интерпретации результатов:**
 
 1. **ER по дням недели** - показывает, в какие дни недели посты получают больше вовлеченности. Используйте это для планирования публикаций.

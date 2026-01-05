@@ -73,6 +73,8 @@ resources/
 database/
 └── database.sqlite        # SQLite база данных (создается автоматически)
                            # Содержит таблицы: vk_posts, vk_check_cache
+                           # vk_posts - хранит посты для аналитики и поиска
+                           # vk_check_cache - кеш результатов команды vk:check
 ```
 
 
