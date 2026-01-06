@@ -160,6 +160,7 @@ database/
                            # Содержит таблицы: vk_posts, vk_check_cache
                            # vk_posts - хранит посты для аналитики и поиска
                            # vk_check_cache - кеш результатов команды vk:check
+                           #   (включает: post_text, post_date, likes, reposts, members_count, time_since_post)
 ```
 
 

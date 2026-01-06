@@ -87,11 +87,11 @@ php artisan vk:analytics --owner=-12345678
 # Анализ за неделю с определением лучшего времени публикации
 php artisan vk:analytics --owner=-12345678 --period=week --best-time
 
-# Анализ с сравнением с предыдущим месяцем
-php artisan vk:analytics --owner=-12345678 --period=month --compare=previous
+# Анализ с сравнением с предыдущим месяцем и историческими данными подписчиков
+php artisan vk:analytics --owner=-12345678 --period=month --compare=previous --use-stats
 
-# Анализ за произвольный период
-php artisan vk:analytics --owner=-12345678 --period=2024-01-01:2024-01-31
+# Анализ за произвольный период с историческими данными (для более точного ER)
+php artisan vk:analytics --owner=-12345678 --period=2024-01-01:2024-01-31 --use-stats
 
 # Анализ с топ-5 постов по ER
 php artisan vk:analytics --owner=-12345678 --top=5 --metrics=er
@@ -105,12 +105,13 @@ php artisan vk:analytics --owner=-12345678 --format=json --output=analytics.json
 # Экспорт в CSV (создаст несколько файлов в директории reports/)
 php artisan vk:analytics --owner=-12345678 --format=csv --output=reports/analytics.csv
 
-# Полный анализ с всеми опциями
+# Полный анализ с всеми опциями и историческими данными
 php artisan vk:analytics \
   --owner=-12345678 \
   --period=month \
   --compare=previous \
   --best-time \
+  --use-stats \
   --top=10 \
   --metrics=all \
   --timezone=Europe/Moscow \
