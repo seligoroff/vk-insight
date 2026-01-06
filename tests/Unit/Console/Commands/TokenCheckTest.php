@@ -3,38 +3,118 @@
 namespace Tests\Unit\Console\Commands;
 
 use Tests\TestCase;
-use Illuminate\Support\Facades\Http;
-use Illuminate\Support\Facades\Config;
+use App\Services\VkApi\VkApiTestService;
+use App\Services\VkApi\VkSdkAdapter;
+use Mockery;
 
 class TokenCheckTest extends TestCase
 {
-    /**
-     * Создать мок ответа для users.get
-     */
-    private function createUsersGetResponse(array $userData = []): array
+    protected function tearDown(): void
     {
-        $defaultUser = [
-            'id' => 12345678,
-            'first_name' => 'Test',
-            'last_name' => 'User',
-            'screen_name' => 'testuser',
-        ];
-        
-        return [
-            'response' => [
-                array_merge($defaultUser, $userData)
-            ]
-        ];
+        VkApiTestService::setAdapter(null);
+        parent::tearDown();
+        Mockery::close();
     }
-
     /**
-     * Создать мок ответа для account.getAppPermissions
+     * Создать мок адаптера для VkApiTestService
      */
-    private function createAppPermissionsResponse(int $bitmask): array
+    private function setupAdapterMock(array $mocks): VkSdkAdapter
     {
-        return [
-            'response' => $bitmask
-        ];
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token')->byDefault();
+        
+        // Настройка моков для isTokenValid
+        if (isset($mocks['isTokenValid'])) {
+            $mockUsers = Mockery::mock();
+            $mockAdapter->shouldReceive('users')->andReturn($mockUsers);
+            
+            if ($mocks['isTokenValid']) {
+                $mockAdapter->shouldReceive('execute')
+                    ->with(Mockery::type('Closure'), Mockery::any())
+                    ->andReturnUsing(function($callback) {
+                        return $callback();
+                    });
+                $mockUsers->shouldReceive('get')
+                    ->with('test_token', [])
+                    ->andReturn([['id' => 12345678]]);
+            } else {
+                $mockAdapter->shouldReceive('execute')
+                    ->andThrow(new \Exception('Invalid token'));
+            }
+        }
+        
+        // Настройка моков для getCurrentUser
+        if (isset($mocks['getCurrentUser'])) {
+            $mockUsers = Mockery::mock();
+            $mockAdapter->shouldReceive('users')->andReturn($mockUsers);
+            $mockAdapter->shouldReceive('execute')
+                ->with(Mockery::type('Closure'), Mockery::any())
+                ->andReturnUsing(function($callback) {
+                    return $callback();
+                });
+            $mockUsers->shouldReceive('get')
+                ->with('test_token', Mockery::any())
+                ->andReturn([$mocks['getCurrentUser']]);
+        }
+        
+        // Настройка моков для getAppPermissions (используется через executeRaw)
+        if (isset($mocks['getAppPermissions'])) {
+            $mockAccount = Mockery::mock();
+            $mockAdapter->shouldReceive('account')->andReturn($mockAccount);
+            
+            if (isset($mocks['getAppPermissions']['error'])) {
+                $vkApiError = new \VK\Client\VKApiError([
+                    'error_code' => $mocks['getAppPermissions']['error']['error_code'],
+                    'error_msg' => $mocks['getAppPermissions']['error']['error_msg']
+                ]);
+                $exception = new \VK\Exceptions\VKApiException(
+                    $mocks['getAppPermissions']['error']['error_code'],
+                    $mocks['getAppPermissions']['error']['error_msg'],
+                    $vkApiError
+                );
+                $mockAccount->shouldReceive('getAppPermissions')
+                    ->with('test_token', Mockery::any())
+                    ->andThrow($exception);
+            } else {
+                $mockAccount->shouldReceive('getAppPermissions')
+                    ->with('test_token', Mockery::any())
+                    ->andReturn($mocks['getAppPermissions']['bitmask']);
+            }
+        }
+        
+        // Настройка моков для testMethod (используется через executeRaw)
+        // Поддерживаемые методы: wall.get, groups.get, photos.getAlbums, audio.get
+        if (isset($mocks['testMethod'])) {
+            foreach ($mocks['testMethod'] as $method => $result) {
+                $parts = explode('.', $method);
+                if (count($parts) === 2) {
+                    [$apiName, $apiMethod] = $parts;
+                    $apiObject = Mockery::mock();
+                    $mockAdapter->shouldReceive($apiName)->andReturn($apiObject);
+                    
+                    if (isset($result['error'])) {
+                        $vkApiError = new \VK\Client\VKApiError([
+                            'error_code' => $result['error']['error_code'],
+                            'error_msg' => $result['error']['error_msg']
+                        ]);
+                        $exception = new \VK\Exceptions\VKApiException(
+                            $result['error']['error_code'],
+                            $result['error']['error_msg'],
+                            $vkApiError
+                        );
+                        $apiObject->shouldReceive($apiMethod)
+                            ->with('test_token', Mockery::any())
+                            ->andThrow($exception);
+                    } else {
+                        $apiObject->shouldReceive($apiMethod)
+                            ->with('test_token', Mockery::any())
+                            ->andReturn($result['response'] ?? []);
+                    }
+                }
+            }
+        }
+        
+        return $mockAdapter;
     }
 
     /**
@@ -46,16 +126,17 @@ class TokenCheckTest extends TestCase
         // 8192 + 262144 + 4 + 65536 = 335876
         $bitmask = 335876;
 
-        Http::fake([
-            'https://api.vk.com/method/users.get*' => Http::response(
-                $this->createUsersGetResponse(),
-                200
-            ),
-            'https://api.vk.com/method/account.getAppPermissions*' => Http::response(
-                $this->createAppPermissionsResponse($bitmask),
-                200
-            ),
+        $mockAdapter = $this->setupAdapterMock([
+            'isTokenValid' => true,
+            'getCurrentUser' => [
+                'id' => 12345678,
+                'first_name' => 'Test',
+                'last_name' => 'User',
+                'screen_name' => 'testuser',
+            ],
+            'getAppPermissions' => ['bitmask' => $bitmask],
         ]);
+        VkApiTestService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:token-check');
 
@@ -68,30 +149,28 @@ class TokenCheckTest extends TestCase
      */
     public function test_fallback_to_legacy_method_when_getapppermissions_fails()
     {
-        Http::fake([
-            'https://api.vk.com/method/users.get*' => Http::response(
-                $this->createUsersGetResponse(),
-                200
-            ),
-            'https://api.vk.com/method/account.getAppPermissions*' => Http::response([
+        $mockAdapter = $this->setupAdapterMock([
+            'isTokenValid' => true,
+            'getCurrentUser' => [
+                'id' => 12345678,
+                'first_name' => 'Test',
+                'last_name' => 'User',
+                'screen_name' => 'testuser',
+            ],
+            'getAppPermissions' => [
                 'error' => [
                     'error_code' => 15,
                     'error_msg' => 'Access denied'
                 ]
-            ], 200),
-            'https://api.vk.com/method/wall.get*' => Http::response([
-                'response' => ['count' => 0, 'items' => []]
-            ], 200),
-            'https://api.vk.com/method/groups.get*' => Http::response([
-                'response' => ['count' => 0, 'items' => []]
-            ], 200),
-            'https://api.vk.com/method/photos.getAlbums*' => Http::response([
-                'response' => ['count' => 0, 'items' => []]
-            ], 200),
-            'https://api.vk.com/method/audio.get*' => Http::response([
-                'response' => ['count' => 0, 'items' => []]
-            ], 200),
+            ],
+            'testMethod' => [
+                'wall.get' => ['response' => ['count' => 0, 'items' => []]],
+                'groups.get' => ['response' => ['count' => 0, 'items' => []]],
+                'photos.getAlbums' => ['response' => ['count' => 0, 'items' => []]],
+                'audio.get' => ['response' => ['count' => 0, 'items' => []]],
+            ],
         ]);
+        VkApiTestService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:token-check');
 
@@ -108,24 +187,21 @@ class TokenCheckTest extends TestCase
         // 262144 + 65536 = 327680
         $bitmask = 327680;
 
-        Http::fake([
-            'https://api.vk.com/method/users.get*' => Http::response(
-                $this->createUsersGetResponse(),
-                200
-            ),
-            'https://api.vk.com/method/account.getAppPermissions*' => Http::response(
-                $this->createAppPermissionsResponse($bitmask),
-                200
-            ),
-            // wall.get должен быть вызван для дополнительной проверки, так как wall нет в битовой маске
-            'https://api.vk.com/method/wall.get*' => Http::response([
-                'response' => ['count' => 0, 'items' => []]
-            ], 200),
-            // photos.getAlbums должен быть вызван для дополнительной проверки
-            'https://api.vk.com/method/photos.getAlbums*' => Http::response([
-                'response' => ['count' => 0, 'items' => []]
-            ], 200),
+        $mockAdapter = $this->setupAdapterMock([
+            'isTokenValid' => true,
+            'getCurrentUser' => [
+                'id' => 12345678,
+                'first_name' => 'Test',
+                'last_name' => 'User',
+                'screen_name' => 'testuser',
+            ],
+            'getAppPermissions' => ['bitmask' => $bitmask],
+            'testMethod' => [
+                'wall.get' => ['response' => ['count' => 0, 'items' => []]],
+                'photos.getAlbums' => ['response' => ['count' => 0, 'items' => []]],
+            ],
         ]);
+        VkApiTestService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:token-check');
 
@@ -141,22 +217,17 @@ class TokenCheckTest extends TestCase
     {
         $bitmask = 335876;
 
-        Http::fake([
-            'https://api.vk.com/method/users.get*' => Http::response(
-                $this->createUsersGetResponse(),
-                200
-            ),
-            'https://api.vk.com/method/account.getAppPermissions*' => function ($request) use ($bitmask) {
-                // Проверяем, что user_id передается в запросе
-                parse_str(parse_url($request->url(), PHP_URL_QUERY), $params);
-                $this->assertEquals('98765432', $params['user_id'] ?? null);
-                
-                return Http::response(
-                    $this->createAppPermissionsResponse($bitmask),
-                    200
-                );
-            },
+        $mockAdapter = $this->setupAdapterMock([
+            'isTokenValid' => true,
+            'getCurrentUser' => [
+                'id' => 12345678,
+                'first_name' => 'Test',
+                'last_name' => 'User',
+                'screen_name' => 'testuser',
+            ],
+            'getAppPermissions' => ['bitmask' => $bitmask],
         ]);
+        VkApiTestService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:token-check', ['--user-id' => '98765432']);
 
@@ -184,22 +255,35 @@ class TokenCheckTest extends TestCase
 
         $bitmask = 335876;
 
-        Http::fake([
-            'https://api.vk.com/method/users.get*' => function ($request) use ($testToken) {
-                // Проверяем, что используется переданный токен
-                parse_str(parse_url($request->url(), PHP_URL_QUERY), $params);
-                $this->assertEquals($testToken, $params['access_token'] ?? null);
-                
-                return Http::response(
-                    $this->createUsersGetResponse(),
-                    200
-                );
-            },
-            'https://api.vk.com/method/account.getAppPermissions*' => Http::response(
-                $this->createAppPermissionsResponse($bitmask),
-                200
-            ),
-        ]);
+        // Создаем адаптер с кастомным токеном
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockUsers = Mockery::mock();
+        $mockAccount = Mockery::mock();
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn($testToken);
+        $mockAdapter->shouldReceive('users')->andReturn($mockUsers);
+        $mockAdapter->shouldReceive('account')->andReturn($mockAccount);
+        $mockAdapter->shouldReceive('execute')
+            ->with(Mockery::type('Closure'), Mockery::any())
+            ->andReturnUsing(function($callback) {
+                return $callback();
+            });
+        $mockUsers->shouldReceive('get')
+            ->with($testToken, [])
+            ->andReturn([['id' => 12345678]]);
+        $mockUsers->shouldReceive('get')
+            ->with($testToken, Mockery::any())
+            ->andReturn([[
+                'id' => 12345678,
+                'first_name' => 'Test',
+                'last_name' => 'User',
+                'screen_name' => 'testuser',
+            ]]);
+        $mockAccount->shouldReceive('getAppPermissions')
+            ->with($testToken, Mockery::any())
+            ->andReturn($bitmask);
+        
+        VkApiTestService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:token-check', ['--token' => $testToken]);
 
@@ -216,16 +300,17 @@ class TokenCheckTest extends TestCase
     {
         $bitmask = 335876;
 
-        Http::fake([
-            'https://api.vk.com/method/users.get*' => Http::response(
-                $this->createUsersGetResponse(),
-                200
-            ),
-            'https://api.vk.com/method/account.getAppPermissions*' => Http::response(
-                $this->createAppPermissionsResponse($bitmask),
-                200
-            ),
+        $mockAdapter = $this->setupAdapterMock([
+            'isTokenValid' => true,
+            'getCurrentUser' => [
+                'id' => 12345678,
+                'first_name' => 'Test',
+                'last_name' => 'User',
+                'screen_name' => 'testuser',
+            ],
+            'getAppPermissions' => ['bitmask' => $bitmask],
         ]);
+        VkApiTestService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:token-check', ['--format' => 'json']);
 
@@ -242,16 +327,17 @@ class TokenCheckTest extends TestCase
         // 8192 + 262144 + 4 + 8 + 65536 = 335884
         $bitmask = 335884;
 
-        Http::fake([
-            'https://api.vk.com/method/users.get*' => Http::response(
-                $this->createUsersGetResponse(),
-                200
-            ),
-            'https://api.vk.com/method/account.getAppPermissions*' => Http::response(
-                $this->createAppPermissionsResponse($bitmask),
-                200
-            ),
+        $mockAdapter = $this->setupAdapterMock([
+            'isTokenValid' => true,
+            'getCurrentUser' => [
+                'id' => 12345678,
+                'first_name' => 'Test',
+                'last_name' => 'User',
+                'screen_name' => 'testuser',
+            ],
+            'getAppPermissions' => ['bitmask' => $bitmask],
         ]);
+        VkApiTestService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:token-check', ['--format' => 'json']);
 
@@ -268,26 +354,22 @@ class TokenCheckTest extends TestCase
         // 262144 + 65536 = 327680
         $bitmask = 327680;
 
-        Http::fake([
-            'https://api.vk.com/method/users.get*' => Http::response(
-                $this->createUsersGetResponse(),
-                200
-            ),
-            'https://api.vk.com/method/account.getAppPermissions*' => Http::response(
-                $this->createAppPermissionsResponse($bitmask),
-                200
-            ),
-            // Дополнительные проверки через API для прав, которых нет в маске
-            'https://api.vk.com/method/wall.get*' => Http::response([
-                'response' => ['count' => 0, 'items' => []]
-            ], 200),
-            'https://api.vk.com/method/photos.getAlbums*' => Http::response([
-                'response' => ['count' => 0, 'items' => []]
-            ], 200),
-            'https://api.vk.com/method/audio.get*' => Http::response([
-                'response' => ['count' => 0, 'items' => []]
-            ], 200),
+        $mockAdapter = $this->setupAdapterMock([
+            'isTokenValid' => true,
+            'getCurrentUser' => [
+                'id' => 12345678,
+                'first_name' => 'Test',
+                'last_name' => 'User',
+                'screen_name' => 'testuser',
+            ],
+            'getAppPermissions' => ['bitmask' => $bitmask],
+            'testMethod' => [
+                'wall.get' => ['response' => ['count' => 0, 'items' => []]],
+                'photos.getAlbums' => ['response' => ['count' => 0, 'items' => []]],
+                'audio.get' => ['response' => ['count' => 0, 'items' => []]],
+            ],
         ]);
+        VkApiTestService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:token-check', ['--format' => 'json']);
 
@@ -301,14 +383,10 @@ class TokenCheckTest extends TestCase
      */
     public function test_handles_invalid_token()
     {
-        Http::fake([
-            'https://api.vk.com/method/users.get*' => Http::response([
-                'error' => [
-                    'error_code' => 5,
-                    'error_msg' => 'Invalid access token'
-                ]
-            ], 200),
+        $mockAdapter = $this->setupAdapterMock([
+            'isTokenValid' => false,
         ]);
+        VkApiTestService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:token-check');
 

@@ -152,6 +152,28 @@ php artisan vk:word мастер-класс --owner=-12345678 --from=2024-01-01 
 - Поиск контента по ключевым словам для републикации
 - Анализ реакции аудитории на определенные темы (сравнение статистики)
 
+## Получение токенов
+
+### Получение user access token
+
+```bash
+# Интерактивный режим (команда запросит все параметры)
+php artisan vk:token-get-user
+
+# С указанием параметров
+php artisan vk:token-get-user --client-id=12345678 --redirect-uri=https://oauth.vk.com/blank.html --scopes=wall,groups,photos,stats
+```
+
+### Получение community access token
+
+```bash
+# Интерактивный режим
+php artisan vk:token-get-group
+
+# С указанием параметров
+php artisan vk:token-get-group --client-id=12345678 --client-secret=секретный_ключ --redirect-uri=https://oauth.vk.com/blank.html --scopes=photos,messages
+```
+
 ## Проверка токена и прав доступа
 
 ```bash

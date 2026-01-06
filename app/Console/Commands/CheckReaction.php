@@ -14,6 +14,13 @@ use App\Models\Resource;
 class CheckReaction extends Command
 {
     /**
+     * Флаг для отслеживания, было ли уже выведено предупреждение о поврежденной БД
+     *
+     * @var bool
+     */
+    private $dbCorruptedWarningShown = false;
+
+    /**
      * The name and signature of the console command.
      *
      * @var string
@@ -92,9 +99,10 @@ class CheckReaction extends Command
                 $likes = $post->likes->count ?? 0;
                 $reposts = $post->reposts->count ?? 0;
                 $membersCount = is_object($group) ? ($group->members_count ?? 0) : ($group['members_count'] ?? 0);
+                $postDate = $post->date ?? null;
                 
                 // Сохраняем в БД
-                $this->saveToCache($groupName, $groupId, $postText, $likes, $reposts, $membersCount);
+                $this->saveToCache($groupName, $groupId, $postText, $likes, $reposts, $membersCount, $postDate);
                 
                 // Добавляем в массив для вывода
                 $data[] = [
@@ -103,7 +111,8 @@ class CheckReaction extends Command
                     $groupId,
                     $likes,
                     $reposts,
-                    $membersCount
+                    $membersCount,
+                    $postDate
                 ];             
                 $progressbar->advance();
                 if ($this->option('delay')) {
@@ -188,11 +197,24 @@ class CheckReaction extends Command
      */
     private function hasCacheInDatabase(): bool
     {
-        if (!Schema::hasTable('vk_check_cache')) {
-            return false;
+        try {
+            if (!Schema::hasTable('vk_check_cache')) {
+                return false;
+            }
+            
+            return DB::table('vk_check_cache')->exists();
+        } catch (\Exception $e) {
+            // Если база данных повреждена, возвращаем false
+            if (strpos($e->getMessage(), 'disk I/O error') !== false || 
+                strpos($e->getMessage(), 'malformed') !== false) {
+                if (!$this->dbCorruptedWarningShown) {
+                    $this->warn('База данных повреждена. Кэш недоступен. Запустите: rm database/database.sqlite && php artisan migrate');
+                    $this->dbCorruptedWarningShown = true;
+                }
+                return false;
+            }
+            throw $e;
         }
-        
-        return DB::table('vk_check_cache')->exists();
     }
 
     /**
@@ -202,8 +224,22 @@ class CheckReaction extends Command
      */
     private function clearCache(): void
     {
-        if (Schema::hasTable('vk_check_cache')) {
-            DB::table('vk_check_cache')->truncate();
+        try {
+            if (Schema::hasTable('vk_check_cache')) {
+                DB::table('vk_check_cache')->truncate();
+            }
+        } catch (\Exception $e) {
+            // Если база данных повреждена, просто пропускаем очистку кэша
+            if (strpos($e->getMessage(), 'disk I/O error') !== false || 
+                strpos($e->getMessage(), 'malformed') !== false) {
+                if (!$this->dbCorruptedWarningShown) {
+                    $this->warn('База данных повреждена. Кэш не будет использоваться.');
+                    $this->warn('Для восстановления выполните: rm database/database.sqlite && php artisan migrate');
+                    $this->dbCorruptedWarningShown = true;
+                }
+                return;
+            }
+            throw $e;
         }
     }
 
@@ -216,26 +252,41 @@ class CheckReaction extends Command
      * @param int $likes
      * @param int $reposts
      * @param int $membersCount
+     * @param int|null $postDate Unix timestamp даты публикации поста
      * @return void
      */
-    private function saveToCache(string $groupName, int $groupId, string $postText, int $likes, int $reposts, int $membersCount = 0): void
+    private function saveToCache(string $groupName, int $groupId, string $postText, int $likes, int $reposts, int $membersCount = 0, ?int $postDate = null): void
     {
-        if (!Schema::hasTable('vk_check_cache')) {
-            $this->warn('Таблица vk_check_cache не существует. Запустите миграцию: php artisan migrate');
-            return;
-        }
+        try {
+            if (!Schema::hasTable('vk_check_cache')) {
+                $this->warn('Таблица vk_check_cache не существует. Запустите миграцию: php artisan migrate');
+                return;
+            }
 
-        DB::table('vk_check_cache')->insert([
-            'group_name' => $groupName,
-            'group_id' => $groupId,
-            'post_text' => $postText,
-            'likes' => $likes,
-            'reposts' => $reposts,
-            'members_count' => $membersCount,
-            'cached_at' => now(),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+            DB::table('vk_check_cache')->insert([
+                'group_name' => $groupName,
+                'group_id' => $groupId,
+                'post_text' => $postText,
+                'post_date' => $postDate,
+                'likes' => $likes,
+                'reposts' => $reposts,
+                'members_count' => $membersCount,
+                'cached_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } catch (\Exception $e) {
+            // Если база данных повреждена, просто пропускаем сохранение в кэш
+            if (strpos($e->getMessage(), 'disk I/O error') !== false || 
+                strpos($e->getMessage(), 'malformed') !== false) {
+                if (!$this->dbCorruptedWarningShown) {
+                    $this->warn('База данных повреждена. Кэш не будет сохранен. Запустите: rm database/database.sqlite && php artisan migrate');
+                    $this->dbCorruptedWarningShown = true;
+                }
+                return;
+            }
+            throw $e;
+        }
     }
 
     /**
@@ -245,27 +296,41 @@ class CheckReaction extends Command
      */
     private function loadFromCache(): array
     {
-        if (!Schema::hasTable('vk_check_cache')) {
-            return [];
+        try {
+            if (!Schema::hasTable('vk_check_cache')) {
+                return [];
+            }
+
+            $cacheData = DB::table('vk_check_cache')
+                ->orderBy('cached_at', 'desc')
+                ->get();
+
+            $data = [];
+            foreach ($cacheData as $row) {
+                $data[] = [
+                    $row->post_text,
+                    $row->group_name,
+                    $row->group_id,
+                    $row->likes,
+                    $row->reposts,
+                    $row->members_count ?? 0,
+                    $row->post_date ?? null
+                ];
+            }
+
+            return $data;
+        } catch (\Exception $e) {
+            // Если база данных повреждена, возвращаем пустой массив
+            if (strpos($e->getMessage(), 'disk I/O error') !== false || 
+                strpos($e->getMessage(), 'malformed') !== false) {
+                if (!$this->dbCorruptedWarningShown) {
+                    $this->warn('База данных повреждена. Кэш недоступен. Запустите: rm database/database.sqlite && php artisan migrate');
+                    $this->dbCorruptedWarningShown = true;
+                }
+                return [];
+            }
+            throw $e;
         }
-
-        $cacheData = DB::table('vk_check_cache')
-            ->orderBy('cached_at', 'desc')
-            ->get();
-
-        $data = [];
-        foreach ($cacheData as $row) {
-            $data[] = [
-                $row->post_text,
-                $row->group_name,
-                $row->group_id,
-                $row->likes,
-                $row->reposts,
-                $row->members_count ?? 0
-            ];
-        }
-
-        return $data;
     }
 
     /**
@@ -285,9 +350,51 @@ class CheckReaction extends Command
                 'likes' => $row[3] ?? 0,
                 'reposts' => $row[4] ?? 0,
                 'members_count' => $row[5] ?? 0,
+                'post_date' => $row[6] ?? null,
             ];
         }
         return $structured;
+    }
+
+    /**
+     * Форматировать время с момента публикации поста
+     * Формат: "X дн Y ч" или только часы/дни если одна из единиц равна нулю
+     *
+     * @param int|null $postTimestamp Unix timestamp даты публикации поста
+     * @return string
+     */
+    private function formatTimeSincePost(?int $postTimestamp): string
+    {
+        if ($postTimestamp === null || $postTimestamp === 0) {
+            return 'N/A';
+        }
+
+        $now = time();
+        $diffSeconds = $now - $postTimestamp;
+
+        if ($diffSeconds < 0) {
+            return 'N/A'; // Пост из будущего - некорректные данные
+        }
+
+        $totalHours = (int) floor($diffSeconds / 3600);
+        $days = (int) floor($totalHours / 24);
+        $hours = $totalHours % 24;
+
+        if ($days > 0 && $hours > 0) {
+            return "{$days} дн {$hours} ч";
+        } elseif ($days > 0) {
+            return "{$days} дн";
+        } elseif ($hours > 0) {
+            return "{$hours} ч";
+        } else {
+            // Меньше часа - показываем минуты
+            $minutes = (int) floor($diffSeconds / 60);
+            if ($minutes > 0) {
+                return "{$minutes} мин";
+            } else {
+                return 'только что';
+            }
+        }
     }
 
     /**
@@ -329,10 +436,11 @@ class CheckReaction extends Command
                 $row['likes'],
                 $row['reposts'],
                 number_format($row['members_count'], 0, ',', ' '),
+                $this->formatTimeSincePost($row['post_date'] ?? null),
             ];
         }
         
-        $this->table(['Post', 'Group name', 'Group ID', 'Likes', 'Reposts', 'Подписчики'], $tableData);
+        $this->table(['Post', 'Group name', 'Group ID', 'Likes', 'Reposts', 'Подписчики', 'Время с публикации'], $tableData);
     }
 
     /**
@@ -352,6 +460,8 @@ class CheckReaction extends Command
                 'likes' => $row['likes'],
                 'reposts' => $row['reposts'],
                 'members_count' => $row['members_count'],
+                'post_date' => $row['post_date'] ?? null,
+                'time_since_post' => $this->formatTimeSincePost($row['post_date'] ?? null),
             ];
         }
 
@@ -379,7 +489,7 @@ class CheckReaction extends Command
         fwrite($output, "\xEF\xBB\xBF");
         
         // Заголовки
-        fputcsv($output, ['post_text', 'group_name', 'group_id', 'likes', 'reposts', 'members_count']);
+        fputcsv($output, ['post_text', 'group_name', 'group_id', 'likes', 'reposts', 'members_count', 'time_since_post']);
 
         // Данные
         foreach ($data as $row) {
@@ -390,6 +500,7 @@ class CheckReaction extends Command
                 $row['likes'],
                 $row['reposts'],
                 $row['members_count'],
+                $this->formatTimeSincePost($row['post_date'] ?? null),
             ]);
         }
 
@@ -417,8 +528,8 @@ class CheckReaction extends Command
         }
         
         $output .= "## Результаты\n\n";
-        $output .= "| Post | Group name | Group ID | Likes | Reposts | Подписчики |\n";
-        $output .= "|------|------------|----------|-------|----------|------------|\n";
+        $output .= "| Post | Group name | Group ID | Likes | Reposts | Подписчики | Время с публикации |\n";
+        $output .= "|------|------------|----------|-------|----------|------------|-------------------|\n";
         
         foreach ($data as $row) {
             $postText = $row['post_text'] ?: '(без текста)';
@@ -430,15 +541,17 @@ class CheckReaction extends Command
             $postText = str_replace('|', '\\|', $postText);
             
             $groupName = str_replace('|', '\\|', $row['group_name']);
+            $timeSince = $this->formatTimeSincePost($row['post_date'] ?? null);
             
             $output .= sprintf(
-                "| %s | %s | %d | %d | %d | %s |\n",
+                "| %s | %s | %d | %d | %d | %s | %s |\n",
                 $postText,
                 $groupName,
                 $row['group_id'],
                 $row['likes'],
                 $row['reposts'],
-                number_format($row['members_count'], 0, ',', ' ')
+                number_format($row['members_count'], 0, ',', ' '),
+                $timeSince
             );
         }
         

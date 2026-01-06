@@ -4,11 +4,17 @@ namespace Tests\Unit\Services\VkApi;
 
 use Tests\TestCase;
 use App\Services\VkApi\VkPhotoService;
-use Illuminate\Support\Facades\Http;
+use App\Services\VkApi\VkSdkAdapter;
+use Mockery;
 use stdClass;
 
 class VkPhotoServiceTest extends TestCase
 {
+    protected function tearDown(): void
+    {
+        parent::tearDown();
+        Mockery::close();
+    }
     /**
      * Создать мок альбома VK API
      */
@@ -50,23 +56,18 @@ class VkPhotoServiceTest extends TestCase
     public function test_gets_albums()
     {
         $albums = [
-            $this->createMockAlbum([
-                'id' => 1,
-                'title' => 'Альбом 1',
-                'size' => 10,
-            ]),
-            $this->createMockAlbum([
-                'id' => 2,
-                'title' => 'Альбом 2',
-                'size' => 20,
-            ]),
+            ['id' => 1, 'title' => 'Альбом 1', 'size' => 10, 'owner_id' => -12345678],
+            ['id' => 2, 'title' => 'Альбом 2', 'size' => 20, 'owner_id' => -12345678],
         ];
 
-        Http::fake([
-            'https://api.vk.com/method/photos.getAlbums*' => Http::response($this->createGetAlbumsResponse($albums), 200),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn(['items' => $albums]);
 
         $service = new VkPhotoService();
+        $service->setAdapter($mockAdapter);
         $result = $service->getAlbums(-12345678);
 
         $this->assertIsArray($result);
@@ -81,18 +82,17 @@ class VkPhotoServiceTest extends TestCase
     public function test_gets_albums_with_params()
     {
         $albums = [
-            $this->createMockAlbum([
-                'id' => -6, // Системный альбом
-                'title' => 'Фотографии со мной',
-                'size' => 5,
-            ]),
+            ['id' => -6, 'title' => 'Фотографии со мной', 'size' => 5, 'owner_id' => -12345678], // Системный альбом
         ];
 
-        Http::fake([
-            'https://api.vk.com/method/photos.getAlbums*' => Http::response($this->createGetAlbumsResponse($albums), 200),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn(['items' => $albums]);
 
         $service = new VkPhotoService();
+        $service->setAdapter($mockAdapter);
         $result = $service->getAlbums(-12345678, [
             'need_system' => 1,
             'need_covers' => 1,
@@ -112,29 +112,30 @@ class VkPhotoServiceTest extends TestCase
         // Первая страница (100 альбомов)
         $albumsPage1 = [];
         for ($i = 1; $i <= 100; $i++) {
-            $albumsPage1[] = $this->createMockAlbum([
-                'id' => $i,
-                'title' => "Альбом {$i}",
-                'size' => $i,
-            ]);
+            $albumsPage1[] = ['id' => $i, 'title' => "Альбом {$i}", 'size' => $i, 'owner_id' => -12345678];
         }
 
         // Вторая страница (меньше 100, значит последняя)
         $albumsPage2 = [
-            $this->createMockAlbum([
-                'id' => 101,
-                'title' => 'Альбом 101',
-                'size' => 101,
-            ]),
+            ['id' => 101, 'title' => 'Альбом 101', 'size' => 101, 'owner_id' => -12345678],
         ];
 
-        Http::fake([
-            'https://api.vk.com/method/photos.getAlbums*' => Http::sequence()
-                ->push($this->createGetAlbumsResponse($albumsPage1), 200)
-                ->push($this->createGetAlbumsResponse($albumsPage2), 200),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->twice()
+            ->andReturnUsing(function() use (&$albumsPage1, &$albumsPage2) {
+                static $callCount = 0;
+                $callCount++;
+                if ($callCount === 1) {
+                    return ['items' => $albumsPage1];
+                } else {
+                    return ['items' => $albumsPage2];
+                }
+            });
 
         $service = new VkPhotoService();
+        $service->setAdapter($mockAdapter);
         $result = $service->getAllAlbums(-12345678);
 
         $this->assertIsArray($result);
@@ -149,15 +150,18 @@ class VkPhotoServiceTest extends TestCase
     public function test_get_all_albums_single_page()
     {
         $albums = [
-            $this->createMockAlbum(['id' => 1, 'title' => 'Альбом 1']),
-            $this->createMockAlbum(['id' => 2, 'title' => 'Альбом 2']),
+            ['id' => 1, 'title' => 'Альбом 1', 'owner_id' => -12345678],
+            ['id' => 2, 'title' => 'Альбом 2', 'owner_id' => -12345678],
         ];
 
-        Http::fake([
-            'https://api.vk.com/method/photos.getAlbums*' => Http::response($this->createGetAlbumsResponse($albums), 200),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn(['items' => $albums]);
 
         $service = new VkPhotoService();
+        $service->setAdapter($mockAdapter);
         $result = $service->getAllAlbums(-12345678);
 
         $this->assertIsArray($result);
@@ -169,16 +173,14 @@ class VkPhotoServiceTest extends TestCase
      */
     public function test_handles_empty_response()
     {
-        Http::fake([
-            'https://api.vk.com/method/photos.getAlbums*' => Http::response([
-                'response' => [
-                    'count' => 0,
-                    'items' => []
-                ]
-            ], 200),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn(['items' => []]);
 
         $service = new VkPhotoService();
+        $service->setAdapter($mockAdapter);
         $result = $service->getAllAlbums(-12345678);
 
         $this->assertIsArray($result);
@@ -190,13 +192,14 @@ class VkPhotoServiceTest extends TestCase
      */
     public function test_handles_null_response()
     {
-        Http::fake([
-            'https://api.vk.com/method/photos.getAlbums*' => Http::response([
-                'response' => null
-            ], 200),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn(null);
 
         $service = new VkPhotoService();
+        $service->setAdapter($mockAdapter);
         $result = $service->getAlbums(-12345678);
 
         $this->assertNull($result);
@@ -208,25 +211,47 @@ class VkPhotoServiceTest extends TestCase
     public function test_gets_albums_with_covers()
     {
         $albums = [
-            $this->createMockAlbum([
+            [
                 'id' => 1,
                 'title' => 'Альбом с обложкой',
                 'thumb_id' => 12345,
                 'thumb_src' => 'https://example.com/thumb.jpg',
-            ]),
+                'owner_id' => -12345678
+            ],
         ];
 
-        Http::fake([
-            'https://api.vk.com/method/photos.getAlbums*' => Http::response($this->createGetAlbumsResponse($albums), 200),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn(['items' => $albums]);
 
         $service = new VkPhotoService();
+        $service->setAdapter($mockAdapter);
         $result = $service->getAlbums(-12345678, ['need_covers' => 1]);
 
         $this->assertIsArray($result);
         $this->assertCount(1, $result);
         $this->assertTrue(isset($result[0]->thumb_src));
         $this->assertEquals('https://example.com/thumb.jpg', $result[0]->thumb_src);
+    }
+
+    /**
+     * Тест обработки ошибки API
+     */
+    public function test_handles_api_error()
+    {
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andThrow(new \Exception('VK API Error: Access denied', 15));
+
+        $service = new VkPhotoService();
+        $service->setAdapter($mockAdapter);
+        $result = $service->getAlbums(-12345678);
+
+        $this->assertNull($result);
     }
 }
 

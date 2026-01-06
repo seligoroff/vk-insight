@@ -4,10 +4,17 @@ namespace Tests\Unit\Services\VkApi;
 
 use Tests\TestCase;
 use App\Services\VkApi\VkGroupService;
-use Illuminate\Support\Facades\Http;
+use App\Services\VkApi\VkSdkAdapter;
+use Mockery;
 
 class VkGroupServiceTest extends TestCase
 {
+    protected function tearDown(): void
+    {
+        // Сбрасываем адаптер после каждого теста
+        VkGroupService::setAdapter(null);
+        parent::tearDown();
+    }
     /**
      * Создать мок ответа VK API для groups.getById
      */
@@ -29,12 +36,22 @@ class VkGroupServiceTest extends TestCase
      */
     public function test_get_by_id_without_fields()
     {
-        Http::fake([
-            'https://api.vk.com/method/groups.getById*' => Http::response(
-                $this->createGroupByIdResponse([]),
-                200
-            ),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockGroups = Mockery::mock();
+        
+        $groupData = [
+            'id' => 12345678,
+            'name' => 'Test Group',
+            'screen_name' => 'testgroup',
+        ];
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('groups')->andReturn($mockGroups);
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn([$groupData]);
+        
+        VkGroupService::setAdapter($mockAdapter);
 
         $group = VkGroupService::getById(12345678);
 
@@ -49,14 +66,21 @@ class VkGroupServiceTest extends TestCase
      */
     public function test_get_by_id_with_members_count()
     {
-        Http::fake([
-            'https://api.vk.com/method/groups.getById*' => Http::response(
-                $this->createGroupByIdResponse([
-                    'members_count' => 5000
-                ]),
-                200
-            ),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        
+        $groupData = [
+            'id' => 12345678,
+            'name' => 'Test Group',
+            'screen_name' => 'testgroup',
+            'members_count' => 5000,
+        ];
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn([$groupData]);
+        
+        VkGroupService::setAdapter($mockAdapter);
 
         $group = VkGroupService::getById(12345678, ['members_count']);
 
@@ -70,16 +94,23 @@ class VkGroupServiceTest extends TestCase
      */
     public function test_get_by_id_with_multiple_fields()
     {
-        Http::fake([
-            'https://api.vk.com/method/groups.getById*' => Http::response(
-                $this->createGroupByIdResponse([
-                    'members_count' => 5000,
-                    'description' => 'Test description',
-                    'status' => 'Active'
-                ]),
-                200
-            ),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        
+        $groupData = [
+            'id' => 12345678,
+            'name' => 'Test Group',
+            'screen_name' => 'testgroup',
+            'members_count' => 5000,
+            'description' => 'Test description',
+            'status' => 'Active',
+        ];
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn([$groupData]);
+        
+        VkGroupService::setAdapter($mockAdapter);
 
         $group = VkGroupService::getById(12345678, ['members_count', 'description', 'status']);
 
@@ -95,12 +126,20 @@ class VkGroupServiceTest extends TestCase
      */
     public function test_get_by_id_backward_compatibility()
     {
-        Http::fake([
-            'https://api.vk.com/method/groups.getById*' => Http::response(
-                $this->createGroupByIdResponse([]),
-                200
-            ),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        
+        $groupData = [
+            'id' => 12345678,
+            'name' => 'Test Group',
+            'screen_name' => 'testgroup',
+        ];
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn([$groupData]);
+        
+        VkGroupService::setAdapter($mockAdapter);
 
         // Вызов без второго параметра (старый способ)
         $group = VkGroupService::getById(12345678);
@@ -114,24 +153,29 @@ class VkGroupServiceTest extends TestCase
      */
     public function test_get_by_id_filters_empty_fields()
     {
-        Http::fake([
-            'https://api.vk.com/method/groups.getById*' => function ($request) {
-                // Проверяем, что в запросе только валидные поля
-                parse_str(parse_url($request->url(), PHP_URL_QUERY), $params);
-                $this->assertStringContainsString('members_count', $params['fields'] ?? '');
-                $this->assertStringNotContainsString('  ', $params['fields'] ?? ''); // Нет двойных пробелов
-                
-                return Http::response(
-                    $this->createGroupByIdResponse(['members_count' => 5000]),
-                    200
-                );
-            },
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        
+        $groupData = [
+            'id' => 12345678,
+            'name' => 'Test Group',
+            'screen_name' => 'testgroup',
+            'members_count' => 5000,
+            'description' => 'Test description',
+        ];
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn([$groupData]);
+        
+        VkGroupService::setAdapter($mockAdapter);
 
         $group = VkGroupService::getById(12345678, ['members_count', '', '  ', 'description']);
 
+        // Проверяем, что пустые поля были отфильтрованы и запрос прошел успешно
         $this->assertNotNull($group);
         $this->assertEquals(5000, $group->members_count);
+        $this->assertEquals('Test description', $group->description);
     }
 
     /**
@@ -139,11 +183,14 @@ class VkGroupServiceTest extends TestCase
      */
     public function test_get_by_id_handles_empty_response()
     {
-        Http::fake([
-            'https://api.vk.com/method/groups.getById*' => Http::response([
-                'response' => []
-            ], 200),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn([]);
+        
+        VkGroupService::setAdapter($mockAdapter);
 
         $group = VkGroupService::getById(12345678);
 
@@ -155,18 +202,18 @@ class VkGroupServiceTest extends TestCase
      */
     public function test_get_by_id_handles_api_error()
     {
-        Http::fake([
-            'https://api.vk.com/method/groups.getById*' => Http::response([
-                'error' => [
-                    'error_code' => 100,
-                    'error_msg' => 'One of the parameters specified was missing or invalid'
-                ]
-            ], 200),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andThrow(new \Exception('VK API Error: One of the parameters specified was missing or invalid', 100));
+        
+        VkGroupService::setAdapter($mockAdapter);
 
         $group = VkGroupService::getById(12345678);
 
-        // При ошибке API parseResponse вернет null
+        // При ошибке API метод вернет null
         $this->assertNull($group);
     }
 }

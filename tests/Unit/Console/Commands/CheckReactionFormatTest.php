@@ -64,6 +64,8 @@ class CheckReactionFormatTest extends TestCase
                 'group_id' => 12345678,
                 'likes' => 10,
                 'reposts' => 5,
+                'members_count' => 1000,
+                'post_date' => time() - 3600, // 1 час назад
             ],
             [
                 'post_text' => 'Другой пост',
@@ -71,6 +73,8 @@ class CheckReactionFormatTest extends TestCase
                 'group_id' => 87654321,
                 'likes' => 20,
                 'reposts' => 3,
+                'members_count' => 2000,
+                'post_date' => time() - 7200, // 2 часа назад
             ],
         ];
     }
@@ -133,7 +137,7 @@ class CheckReactionFormatTest extends TestCase
         
         // Проверяем заголовки
         $headers = str_getcsv($lines[0]);
-        $expectedHeaders = ['post_text', 'group_name', 'group_id', 'likes', 'reposts'];
+        $expectedHeaders = ['post_text', 'group_name', 'group_id', 'likes', 'reposts', 'members_count', 'time_since_post'];
         $this->assertEquals($expectedHeaders, $headers);
         
         // Проверяем данные первой строки
@@ -161,7 +165,7 @@ class CheckReactionFormatTest extends TestCase
         // Должен быть только заголовок
         $this->assertCount(1, $lines);
         $headers = str_getcsv($lines[0]);
-        $this->assertEquals(['post_text', 'group_name', 'group_id', 'likes', 'reposts'], $headers);
+        $this->assertEquals(['post_text', 'group_name', 'group_id', 'likes', 'reposts', 'members_count', 'time_since_post'], $headers);
     }
 
     /**
@@ -176,6 +180,8 @@ class CheckReactionFormatTest extends TestCase
                 'group_id' => 12345678,
                 'likes' => 10,
                 'reposts' => 5,
+                'members_count' => 1000,
+                'post_date' => time() - 3600,
             ],
         ];
         
@@ -202,7 +208,7 @@ class CheckReactionFormatTest extends TestCase
         $this->assertNotEmpty($markdown);
         $this->assertStringContainsString('# Проверка последних постов в группах VK', $markdown);
         $this->assertStringContainsString('## Результаты', $markdown);
-        $this->assertStringContainsString('| Post | Group name | Group ID | Likes | Reposts |', $markdown);
+        $this->assertStringContainsString('| Post | Group name | Group ID | Likes | Reposts | Подписчики | Время с публикации |', $markdown);
         $this->assertStringContainsString('Тестовый пост с текстом', $markdown);
         $this->assertStringContainsString('Test Group', $markdown);
         $this->assertStringContainsString('**Всего групп:** 2', $markdown);
@@ -232,6 +238,8 @@ class CheckReactionFormatTest extends TestCase
                 'group_id' => 12345678,
                 'likes' => 10,
                 'reposts' => 5,
+                'members_count' => 1000,
+                'post_date' => time() - 3600,
             ],
         ];
         
@@ -264,6 +272,8 @@ class CheckReactionFormatTest extends TestCase
                 'group_id' => 12345678,
                 'likes' => 10,
                 'reposts' => 5,
+                'members_count' => 1000,
+                'post_date' => time() - 3600,
             ],
         ];
         

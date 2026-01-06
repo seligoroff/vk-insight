@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\File;
 use App\Services\VkApi\VkGroupService;
 use App\Services\VkApi\VkUrlBuilder;
+use VK\Client\VKApiClient;
+use VK\Enums\StatsInterval;
 
 class Analytics extends Command
 {
@@ -29,7 +31,8 @@ class Analytics extends Command
                             {--min-engagement=0 : Минимальная вовлеченность для учета поста}
                             {--timezone= : Таймзона для анализа времени публикации (по умолчанию из config/app.php)}
                             {--format=table : Формат вывода: table, json, csv}
-                            {--output= : Путь к файлу для сохранения результатов (опциональный)}';
+                            {--output= : Путь к файлу для сохранения результатов (опциональный)}
+                            {--use-stats : Использовать stats.get для получения исторических данных о подписчиках (более точный ER)}';
 
     /**
      * The console command description.
@@ -136,19 +139,38 @@ class Analytics extends Command
         $membersCount = $groupInfo['members_count'] ?? 0;
         $ownerName = $groupInfo['name'] ?? $groupInfo['screen_name'] ?? null;
         
+        // Получение исторических данных о подписчиках через stats.get (если включена опция)
+        $historicalMembersCount = null;
+        if ($this->option('use-stats') && $membersCount > 0) {
+            try {
+                $historicalMembersCount = $this->getHistoricalMembersCount($groupId, $period['from'], $period['to'], $membersCount);
+                if ($historicalMembersCount !== null) {
+                    if ($format === 'table') {
+                        $this->info("Используются исторические данные о подписчиках из stats.get");
+                    }
+                }
+            } catch (\Exception $e) {
+                $this->warn('Не удалось получить исторические данные о подписчиках: ' . $e->getMessage());
+                $this->warn('Будет использовано текущее количество подписчиков');
+            }
+        }
+        
         if ($membersCount === 0) {
             $this->warn('Не удалось получить количество подписчиков. ER будет рассчитан без учета подписчиков.');
         } else {
             if ($format === 'table') {
-                $this->info("Подписчиков: " . number_format($membersCount, 0, ',', ' '));
+                $currentCount = $historicalMembersCount !== null && !empty($historicalMembersCount) 
+                    ? end($historicalMembersCount) 
+                    : $membersCount;
+                $this->info("Подписчиков (текущее): " . number_format($currentCount, 0, ',', ' '));
             }
         }
 
         // Расчет общей статистики
-        $summary = $this->calculateSummary($posts, $membersCount);
+        $summary = $this->calculateSummary($posts, $membersCount, $historicalMembersCount);
         
         // Группировка по дням недели
-        $erByDay = $this->groupByDayOfWeek($posts, $timezone, $membersCount);
+        $erByDay = $this->groupByDayOfWeek($posts, $timezone, $membersCount, $historicalMembersCount);
         
         // Группировка по часам (если нужно)
         $bestTime = [];
@@ -157,7 +179,7 @@ class Analytics extends Command
             if ($timezone === 'UTC' && $format === 'table' && !$this->option('timezone')) {
                 $this->warn('Используется UTC для анализа времени. Для российских групп рекомендуется указать VK_ANALYTICS_TIMEZONE=Europe/Moscow в .env или --timezone=Europe/Moscow');
             }
-            $bestTime = $this->groupByHour($posts, $timezone, $membersCount);
+            $bestTime = $this->groupByHour($posts, $timezone, $membersCount, $historicalMembersCount);
         }
 
         // Топ-посты по метрикам
@@ -166,7 +188,7 @@ class Analytics extends Command
         if ($topLimit > 0) {
             $metrics = $this->parseMetrics($this->option('metrics'));
             foreach ($metrics as $metric) {
-                $topPosts = $this->getTopPosts($posts, $metric, $topLimit, $membersCount, $ownerId);
+                $topPosts = $this->getTopPosts($posts, $metric, $topLimit, $membersCount, $ownerId, $historicalMembersCount);
                 if (!empty($topPosts)) {
                     $topPostsData[$metric] = $topPosts;
                 }
@@ -180,7 +202,16 @@ class Analytics extends Command
             $previousPosts = $this->getPostsForPeriod($ownerId, $previousPeriod['from'], $previousPeriod['to'], $minEngagement);
             
             if (!$previousPosts->isEmpty()) {
-                $previousSummary = $this->calculateSummary($previousPosts, $membersCount);
+                // Для предыдущего периода также используем исторические данные, если доступны
+                $previousHistoricalMembersCount = null;
+                if ($this->option('use-stats') && $membersCount > 0 && $historicalMembersCount !== null) {
+                    try {
+                        $previousHistoricalMembersCount = $this->getHistoricalMembersCount($groupId, $previousPeriod['from'], $previousPeriod['to'], $membersCount);
+                    } catch (\Exception $e) {
+                        // Игнорируем ошибки для предыдущего периода
+                    }
+                }
+                $previousSummary = $this->calculateSummary($previousPosts, $membersCount, $previousHistoricalMembersCount);
                 $comparison = $this->comparePeriods($summary, $previousSummary);
                 $comparison['periods'] = [
                     'current' => [
@@ -430,16 +461,113 @@ class Analytics extends Command
      * @param int $reposts
      * @param int $comments
      * @param int $membersCount
+     * @param string|null $postDate Дата поста (для использования исторических данных)
+     * @param array|null $historicalMembersCount Массив [date => members_count] для исторических данных
      * @return float
      */
-    private function calculateER(int $likes, int $reposts, int $comments, int $membersCount): float
+    private function calculateER(int $likes, int $reposts, int $comments, int $membersCount, ?string $postDate = null, ?array $historicalMembersCount = null): float
     {
+        // Используем исторические данные, если они доступны и указана дата поста
+        if ($historicalMembersCount !== null && $postDate !== null) {
+            $dateKey = Carbon::parse($postDate)->format('Y-m-d');
+            if (isset($historicalMembersCount[$dateKey])) {
+                $membersCount = $historicalMembersCount[$dateKey];
+            }
+        }
+        
         if ($membersCount == 0) {
             return 0.0;
         }
         
         $engagement = $likes + $reposts + $comments;
         return round(($engagement / $membersCount) * 100, 2);
+    }
+
+    /**
+     * Получение исторических данных о подписчиках через stats.get
+     * 
+     * @param int $groupId ID группы
+     * @param Carbon $from Начало периода
+     * @param Carbon $to Конец периода
+     * @param int $currentMembersCount Текущее количество подписчиков (на конец периода)
+     * @return array|null Массив [date => members_count] или null в случае ошибки
+     */
+    private function getHistoricalMembersCount(int $groupId, Carbon $from, Carbon $to, int $currentMembersCount): ?array
+    {
+        $token = config('vk.token');
+        if (empty($token)) {
+            return null;
+        }
+
+        try {
+            $vk = new VKApiClient(config('vk.version', '5.131'));
+            
+            $params = [
+                'group_id' => $groupId,
+                'timestamp_from' => $from->timestamp,
+                'timestamp_to' => $to->timestamp,
+                'interval' => StatsInterval::DAY,
+            ];
+
+            $this->info('Получение исторических данных о подписчиках через stats.get...');
+            $stats = $vk->stats()->get($token, $params);
+
+            if (empty($stats) || !is_array($stats)) {
+                return null;
+            }
+
+            // Сортируем по дате (от конца к началу)
+            usort($stats, function($a, $b) {
+                return ($b['period_to'] ?? 0) <=> ($a['period_to'] ?? 0);
+            });
+
+            // Создаем массив [date => members_count]
+            // Начинаем с текущего количества подписчиков (конец периода)
+            $historicalData = [];
+            $membersCount = $currentMembersCount;
+
+            // Двигаемся от конца периода к началу
+            foreach ($stats as $period) {
+                $periodTo = isset($period['period_to']) ? (int)$period['period_to'] : null;
+                if ($periodTo === null) {
+                    continue;
+                }
+
+                $dateKey = date('Y-m-d', $periodTo);
+                
+                // Количество подписчиков на конец этого дня = текущее количество
+                $historicalData[$dateKey] = $membersCount;
+
+                // Рассчитываем количество подписчиков на начало дня
+                // subscribed и unsubscribed - это изменения за день
+                // members_count[date_start] = members_count[date_end] - subscribed[date] + unsubscribed[date]
+                $subscribed = isset($period['activity']['subscribed']) ? (int)$period['activity']['subscribed'] : 0;
+                $unsubscribed = isset($period['activity']['unsubscribed']) ? (int)$period['activity']['unsubscribed'] : 0;
+                
+                // Количество подписчиков на начало этого дня (конец предыдущего дня)
+                $membersCount = $membersCount - $subscribed + $unsubscribed;
+                
+                // Также сохраняем количество подписчиков на начало дня
+                $periodFrom = isset($period['period_from']) ? (int)$period['period_from'] : null;
+                if ($periodFrom !== null) {
+                    $dateKeyFrom = date('Y-m-d', $periodFrom);
+                    if (!isset($historicalData[$dateKeyFrom])) {
+                        $historicalData[$dateKeyFrom] = $membersCount;
+                    }
+                }
+            }
+
+            return $historicalData;
+        } catch (\VK\Exceptions\VKApiException $e) {
+            $this->warn('Ошибка VK API при получении статистики: ' . $e->getMessage());
+            return null;
+        } catch (\VK\Exceptions\VKClientException $e) {
+            $this->warn('Ошибка клиента VK при получении статистики: ' . $e->getMessage());
+            return null;
+        } catch (\Exception $e) {
+            $this->warn('Ошибка при получении исторических данных: ' . $e->getMessage());
+            return null;
+        }
     }
 
     /**
@@ -470,13 +598,14 @@ class Analytics extends Command
     }
 
     /**
-     * Расчет общей статистики
+     * Расчет общей статистики по постам
      *
      * @param Collection $posts
      * @param int $membersCount
+     * @param array|null $historicalMembersCount Исторические данные о подписчиках
      * @return array
      */
-    private function calculateSummary(Collection $posts, int $membersCount): array
+    private function calculateSummary(Collection $posts, int $membersCount, ?array $historicalMembersCount = null): array
     {
         if ($posts->isEmpty()) {
             return [
@@ -492,25 +621,34 @@ class Analytics extends Command
         $totalLikes = $posts->sum('likes');
         $totalReposts = $posts->sum('reposts');
         $totalComments = $posts->sum('comments');
-        $totalEngagement = $totalLikes + $totalReposts + $totalComments;
-        
-        $count = $posts->count();
-        
+        $totalPosts = $posts->count();
+
+        // Расчет средних значений
+        $avgLikes = round($totalLikes / $totalPosts, 2);
+        $avgReposts = round($totalReposts / $totalPosts, 2);
+        $avgComments = round($totalComments / $totalPosts, 2);
+
         // Расчет среднего ER: среднее значение ER для каждого поста
         $totalER = 0;
         foreach ($posts as $post) {
-            $totalER += $this->calculateER($post->likes, $post->reposts, $post->comments, $membersCount);
+            $postDate = is_object($post) ? ($post->date ?? null) : ($post['date'] ?? null);
+            $likes = is_object($post) ? ($post->likes ?? 0) : ($post['likes'] ?? 0);
+            $reposts = is_object($post) ? ($post->reposts ?? 0) : ($post['reposts'] ?? 0);
+            $comments = is_object($post) ? ($post->comments ?? 0) : ($post['comments'] ?? 0);
+            $totalER += $this->calculateER($likes, $reposts, $comments, $membersCount, $postDate, $historicalMembersCount);
         }
-        $avgER = $count > 0 ? round($totalER / $count, 2) : 0.0;
-        
+        $avgER = $totalPosts > 0 ? round($totalER / $totalPosts, 2) : 0.0;
+
+        // Общая вовлеченность
+        $totalEngagement = $totalLikes + $totalReposts + $totalComments;
+
         return [
-            'total_posts' => $count,
-            'avg_likes' => round($totalLikes / $count, 2),
-            'avg_reposts' => round($totalReposts / $count, 2),
-            'avg_comments' => round($totalComments / $count, 2),
+            'total_posts' => $totalPosts,
+            'avg_likes' => $avgLikes,
+            'avg_reposts' => $avgReposts,
+            'avg_comments' => $avgComments,
             'avg_er' => $avgER,
             'total_engagement' => $totalEngagement,
-            'members_count' => $membersCount,
         ];
     }
 
@@ -520,9 +658,10 @@ class Analytics extends Command
      * @param Collection $posts
      * @param string $timezone
      * @param int $membersCount
+     * @param array|null $historicalMembersCount Исторические данные о подписчиках
      * @return array
      */
-    private function groupByDayOfWeek(Collection $posts, string $timezone, int $membersCount): array
+    private function groupByDayOfWeek(Collection $posts, string $timezone, int $membersCount, ?array $historicalMembersCount = null): array
     {
         $dayNames = [
             0 => 'Воскресенье',
@@ -550,7 +689,8 @@ class Analytics extends Command
             // Расчет среднего ER для дня: среднее значение ER для каждого поста
             $dayTotalER = 0;
             foreach ($dayPosts as $post) {
-                $dayTotalER += $this->calculateER($post->likes, $post->reposts, $post->comments, $membersCount);
+                $postDate = $post->date ?? null;
+                $dayTotalER += $this->calculateER($post->likes, $post->reposts, $post->comments, $membersCount, $postDate, $historicalMembersCount);
             }
             $dayAvgER = $dayPosts->count() > 0 ? round($dayTotalER / $dayPosts->count(), 2) : 0.0;
             
@@ -582,9 +722,10 @@ class Analytics extends Command
      * @param Collection $posts
      * @param string $timezone
      * @param int $membersCount
+     * @param array|null $historicalMembersCount Исторические данные о подписчиках
      * @return array
      */
-    private function groupByHour(Collection $posts, string $timezone, int $membersCount): array
+    private function groupByHour(Collection $posts, string $timezone, int $membersCount, ?array $historicalMembersCount = null): array
     {
         // Группировка по часам с учетом timezone
         $grouped = $posts->groupBy(function($post) use ($timezone) {
@@ -607,7 +748,8 @@ class Analytics extends Command
             // Расчет среднего ER для часа: среднее значение ER для каждого поста
             $hourTotalER = 0;
             foreach ($hourPosts as $post) {
-                $hourTotalER += $this->calculateER($post->likes, $post->reposts, $post->comments, $membersCount);
+                $postDate = $post->date ?? null;
+                $hourTotalER += $this->calculateER($post->likes, $post->reposts, $post->comments, $membersCount, $postDate, $historicalMembersCount);
             }
             $hourAvgER = $hourPosts->count() > 0 ? round($hourTotalER / $hourPosts->count(), 2) : 0.0;
             
@@ -762,14 +904,16 @@ class Analytics extends Command
      * @param int $limit
      * @param int $membersCount
      * @param string $ownerId
+     * @param array|null $historicalMembersCount Исторические данные о подписчиках
      * @return array
      */
-    private function getTopPosts(Collection $posts, string $metric, int $limit, int $membersCount, string $ownerId): array
+    private function getTopPosts(Collection $posts, string $metric, int $limit, int $membersCount, string $ownerId, ?array $historicalMembersCount = null): array
     {
         // Создаем массив постов с расчетом ER
         $postsWithMetrics = [];
         foreach ($posts as $post) {
-            $er = $this->calculateER($post->likes, $post->reposts, $post->comments, $membersCount);
+            $postDate = $post->date ?? null;
+            $er = $this->calculateER($post->likes, $post->reposts, $post->comments, $membersCount, $postDate, $historicalMembersCount);
             
             $postsWithMetrics[] = [
                 'post_id' => $post->post_id,

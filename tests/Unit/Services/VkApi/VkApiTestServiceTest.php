@@ -4,20 +4,33 @@ namespace Tests\Unit\Services\VkApi;
 
 use Tests\TestCase;
 use App\Services\VkApi\VkApiTestService;
-use Illuminate\Support\Facades\Http;
+use App\Services\VkApi\VkSdkAdapter;
+use Mockery;
 
 class VkApiTestServiceTest extends TestCase
 {
+    protected function tearDown(): void
+    {
+        VkApiTestService::setAdapter(null);
+        parent::tearDown();
+        Mockery::close();
+    }
     /**
      * Тест получения битовой маски прав без user_id
      */
     public function test_get_app_permissions_without_user_id()
     {
-        Http::fake([
-            'https://api.vk.com/method/account.getAppPermissions*' => Http::response([
-                'response' => 9355263
-            ], 200),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAccount = Mockery::mock();
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('account')->andReturn($mockAccount);
+        $mockAccount->shouldReceive('getAppPermissions')
+            ->with('test_token', [])
+            ->once()
+            ->andReturn(9355263);
+        
+        VkApiTestService::setAdapter($mockAdapter);
 
         $result = VkApiTestService::getAppPermissions();
 
@@ -32,17 +45,17 @@ class VkApiTestServiceTest extends TestCase
      */
     public function test_get_app_permissions_with_user_id()
     {
-        Http::fake([
-            'https://api.vk.com/method/account.getAppPermissions*' => function ($request) {
-                // Проверяем, что user_id передается в запросе
-                parse_str(parse_url($request->url(), PHP_URL_QUERY), $params);
-                $this->assertEquals('12345678', $params['user_id'] ?? null);
-                
-                return Http::response([
-                    'response' => 9355263
-                ], 200);
-            },
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAccount = Mockery::mock();
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('account')->andReturn($mockAccount);
+        $mockAccount->shouldReceive('getAppPermissions')
+            ->with('test_token', ['user_id' => 12345678])
+            ->once()
+            ->andReturn(9355263);
+        
+        VkApiTestService::setAdapter($mockAdapter);
 
         $result = VkApiTestService::getAppPermissions(12345678);
 
@@ -56,14 +69,29 @@ class VkApiTestServiceTest extends TestCase
      */
     public function test_get_app_permissions_handles_api_error()
     {
-        Http::fake([
-            'https://api.vk.com/method/account.getAppPermissions*' => Http::response([
-                'error' => [
-                    'error_code' => 15,
-                    'error_msg' => 'Access denied'
-                ]
-            ], 200),
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAccount = Mockery::mock();
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('account')->andReturn($mockAccount);
+        
+        // Создаем VKApiError для исключения
+        $vkApiError = new \VK\Client\VKApiError([
+            'error_code' => 15,
+            'error_msg' => 'Access denied'
         ]);
+        $exception = new \VK\Exceptions\VKApiException(
+            15,
+            'Access denied',
+            $vkApiError
+        );
+        
+        $mockAccount->shouldReceive('getAppPermissions')
+            ->with('test_token', [])
+            ->once()
+            ->andThrow($exception);
+        
+        VkApiTestService::setAdapter($mockAdapter);
 
         $result = VkApiTestService::getAppPermissions();
 
@@ -78,11 +106,17 @@ class VkApiTestServiceTest extends TestCase
      */
     public function test_get_app_permissions_handles_invalid_response()
     {
-        Http::fake([
-            'https://api.vk.com/method/account.getAppPermissions*' => Http::response([
-                'response' => 'invalid'
-            ], 200),
-        ]);
+        $mockAdapter = Mockery::mock(VkSdkAdapter::class);
+        $mockAccount = Mockery::mock();
+        
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('account')->andReturn($mockAccount);
+        $mockAccount->shouldReceive('getAppPermissions')
+            ->with('test_token', [])
+            ->once()
+            ->andReturn('invalid');
+        
+        VkApiTestService::setAdapter($mockAdapter);
 
         $result = VkApiTestService::getAppPermissions();
 

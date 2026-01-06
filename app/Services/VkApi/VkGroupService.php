@@ -5,22 +5,65 @@ namespace App\Services\VkApi;
 /**
  * VK Groups API Service
  * Handles operations with groups and communities
+ * 
+ * Migrated to use vkcom/vk-php-sdk via VkSdkAdapter
  */
-class VkGroupService extends VkApiClient
+class VkGroupService
 {
+    private static ?VkSdkAdapter $adapter = null;
+
+    /**
+     * Set adapter instance (for testing)
+     * 
+     * @param VkSdkAdapter|null $adapter
+     * @return void
+     */
+    public static function setAdapter(?VkSdkAdapter $adapter): void
+    {
+        self::$adapter = $adapter;
+    }
+
+    /**
+     * Get SDK adapter instance
+     * 
+     * @return VkSdkAdapter
+     */
+    private static function getAdapter(): VkSdkAdapter
+    {
+        if (self::$adapter === null) {
+            self::$adapter = new VkSdkAdapter();
+        }
+        return self::$adapter;
+    }
+
     /**
      * Resolve screen name to VK object
      * 
      * @param string $screenName Screen name (e.g., 'durov')
-     * @return array|null
+     * @return object|null Returns object with 'type' and 'object_id' properties, or null on error
      */
     public static function resolveName(string $screenName)
     {
-        $response = self::apiGet('utils.resolveScreenName', [
-            'screen_name' => $screenName
-        ]);
+        $adapter = self::getAdapter();
         
-        return self::parseResponse($response);
+        try {
+            $result = $adapter->execute(function() use ($adapter, $screenName) {
+                return $adapter->utils()->resolveScreenName(
+                    $adapter->getToken(),
+                    ['screen_name' => $screenName]
+                );
+            }, "resolving screen name '{$screenName}'");
+            
+            // Convert array to object for backward compatibility
+            if (is_array($result)) {
+                return (object)$result;
+            }
+            
+            return $result;
+        } catch (\Exception $e) {
+            // Return null on error to maintain backward compatibility
+            return null;
+        }
     }
     
     /**
@@ -28,10 +71,12 @@ class VkGroupService extends VkApiClient
      * 
      * @param int|string $groupId Group ID
      * @param array $fields Additional fields to return (e.g., ['members_count', 'description'])
-     * @return array|null
+     * @return array|object|null Returns array/object with group data, or null on error
      */
     public static function getById($groupId, array $fields = [])
     {
+        $adapter = self::getAdapter();
+        
         $params = ['group_id' => $groupId];
         
         if (!empty($fields)) {
@@ -41,29 +86,64 @@ class VkGroupService extends VkApiClient
             });
             
             if (!empty($validFields)) {
-                $params['fields'] = implode(',', $validFields);
+                // SDK ожидает массив полей
+                $params['fields'] = array_values($validFields);
             }
         }
         
-        $response = self::apiGet('groups.getById', $params);
-        
-        $data = self::parseResponse($response);
-        return $data[0] ?? null;
+        try {
+            $result = $adapter->execute(function() use ($adapter, $params) {
+                return $adapter->groups()->getById(
+                    $adapter->getToken(),
+                    $params
+                );
+            }, "getting group by ID {$groupId}");
+            
+            // SDK returns array of groups, return first one for backward compatibility
+            if (is_array($result) && !empty($result)) {
+                $group = $result[0];
+                // Convert array to object if needed for backward compatibility
+                if (is_array($group)) {
+                    return (object)$group;
+                }
+                return $group;
+            }
+            
+            return null;
+        } catch (\Exception $e) {
+            // Return null on error to maintain backward compatibility
+            return null;
+        }
     }
     
     /**
      * Get user's groups
      * 
      * @param int $userId User ID
-     * @return mixed
+     * @return array|object|null Returns groups data, or null on error
      */
     public function getUserGroups(int $userId)
     {
-        $response = self::apiGet('groups.get', [
-            'user_id' => $userId
-        ]);
+        $adapter = self::getAdapter();
         
-        return self::parseResponse($response);
+        try {
+            $result = $adapter->execute(function() use ($adapter, $userId) {
+                return $adapter->groups()->get(
+                    $adapter->getToken(),
+                    ['user_id' => $userId]
+                );
+            }, "getting groups for user {$userId}");
+            
+            // Convert array to object if needed for backward compatibility
+            if (is_array($result)) {
+                return $result;
+            }
+            
+            return $result;
+        } catch (\Exception $e) {
+            // Return null on error to maintain backward compatibility
+            return null;
+        }
     }
 }
 

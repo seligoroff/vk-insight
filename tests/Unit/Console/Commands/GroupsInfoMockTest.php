@@ -3,9 +3,10 @@
 namespace Tests\Unit\Console\Commands;
 
 use Tests\TestCase;
-use Illuminate\Support\Facades\Http;
+use App\Services\VkApi\VkGroupService;
 use Illuminate\Support\Facades\File;
 use stdClass;
+use Mockery;
 
 class GroupsInfoMockTest extends TestCase
 {
@@ -28,6 +29,9 @@ class GroupsInfoMockTest extends TestCase
 
     protected function tearDown(): void
     {
+        // Сбрасываем адаптер VkGroupService
+        VkGroupService::setAdapter(null);
+        
         // Восстанавливаем оригинальный файл
         if (file_exists($this->backupFile)) {
             copy($this->backupFile, $this->testCsvFile);
@@ -83,26 +87,50 @@ class GroupsInfoMockTest extends TestCase
 
     /**
      * Тест получения информации о группах с моками
+     * 
+     * Примечание: Тест использует реальный VkGroupService, но мокирует SDK адаптер
      */
     public function test_gets_groups_info_with_mocks()
     {
         $this->createTestCsvFile(['group1', 'group2']);
 
-        Http::fake([
-            'https://api.vk.com/method/utils.resolveScreenName*' => Http::sequence()
-                ->push($this->createResolveResponse(12345678, 'group'), 200)
-                ->push($this->createResolveResponse(87654321, 'group'), 200),
-            'https://api.vk.com/method/groups.getById*' => Http::sequence()
-                ->push($this->createGroupByIdResponse('Test Group 1', 12345678), 200)
-                ->push($this->createGroupByIdResponse('Test Group 2', 87654321), 200),
-        ]);
+        // Мокируем SDK адаптер для VkGroupService
+        $mockAdapter = Mockery::mock(\App\Services\VkApi\VkSdkAdapter::class);
+        
+        $resolveMeta1 = ['type' => 'group', 'object_id' => 12345678];
+        $resolveMeta2 = ['type' => 'group', 'object_id' => 87654321];
+        
+        $group1Data = ['id' => 12345678, 'name' => 'Test Group 1', 'screen_name' => 'testgroup'];
+        $group2Data = ['id' => 87654321, 'name' => 'Test Group 2', 'screen_name' => 'testgroup2'];
+        
+        // Настраиваем resolveName - два вызова
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('utils')->andReturn(Mockery::mock());
+        $mockAdapter->shouldReceive('execute')
+            ->with(Mockery::type('Closure'), Mockery::pattern('/resolving screen name \'group1\'/'))
+            ->once()
+            ->andReturn($resolveMeta1);
+        $mockAdapter->shouldReceive('execute')
+            ->with(Mockery::type('Closure'), Mockery::pattern('/resolving screen name \'group2\'/'))
+            ->once()
+            ->andReturn($resolveMeta2);
+        
+        // Настраиваем getById - два вызова
+        $mockAdapter->shouldReceive('groups')->andReturn(Mockery::mock());
+        $mockAdapter->shouldReceive('execute')
+            ->with(Mockery::type('Closure'), Mockery::pattern('/getting group by ID 12345678/'))
+            ->once()
+            ->andReturn([$group1Data]);
+        $mockAdapter->shouldReceive('execute')
+            ->with(Mockery::type('Closure'), Mockery::pattern('/getting group by ID 87654321/'))
+            ->once()
+            ->andReturn([$group2Data]);
+        
+        VkGroupService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:groups-info');
 
         $command->assertExitCode(0);
-        
-        // Проверяем, что команда выполнилась успешно
-        // (моки HTTP запросов проверяются автоматически через Http::fake)
     }
 
     /**
@@ -112,11 +140,14 @@ class GroupsInfoMockTest extends TestCase
     {
         $this->createTestCsvFile(['nonexistent']);
 
-        Http::fake([
-            'https://api.vk.com/method/utils.resolveScreenName*' => Http::response([
-                'response' => null
-            ], 200),
-        ]);
+        $mockAdapter = Mockery::mock(\App\Services\VkApi\VkSdkAdapter::class);
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('utils')->andReturn(Mockery::mock());
+        $mockAdapter->shouldReceive('execute')
+            ->once()
+            ->andReturn(null); // resolveName возвращает null при ошибке
+        
+        VkGroupService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:groups-info');
 
@@ -131,15 +162,24 @@ class GroupsInfoMockTest extends TestCase
     {
         $this->createTestCsvFile(['group1']);
 
-        Http::fake([
-            'https://api.vk.com/method/utils.resolveScreenName*' => Http::response(
-                $this->createResolveResponse(12345678, 'group'), 
-                200
-            ),
-            'https://api.vk.com/method/groups.getById*' => Http::response([
-                'response' => []
-            ], 200),
-        ]);
+        $mockAdapter = Mockery::mock(\App\Services\VkApi\VkSdkAdapter::class);
+        
+        // resolveName успешно возвращает мета-данные
+        $mockAdapter->shouldReceive('getToken')->andReturn('test_token');
+        $mockAdapter->shouldReceive('utils')->andReturn(Mockery::mock());
+        $mockAdapter->shouldReceive('execute')
+            ->with(Mockery::type('Closure'), Mockery::pattern('/resolving screen name/'))
+            ->once()
+            ->andReturn(['type' => 'group', 'object_id' => 12345678]);
+        
+        // getById возвращает null (пустой ответ)
+        $mockAdapter->shouldReceive('groups')->andReturn(Mockery::mock());
+        $mockAdapter->shouldReceive('execute')
+            ->with(Mockery::type('Closure'), Mockery::pattern('/getting group by ID/'))
+            ->once()
+            ->andReturn([]); // Пустой массив
+        
+        VkGroupService::setAdapter($mockAdapter);
 
         $command = $this->artisan('vk:groups-info');
 
