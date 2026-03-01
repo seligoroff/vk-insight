@@ -36,6 +36,7 @@ class TokenCheck extends Command
         'photos' => 4,       // Доступ к фотографиям (1 << 2)
         'audio' => 8,        // Доступ к аудиозаписям (1 << 3)
         'offline' => 65536,  // Бессрочный токен (1 << 16)
+        'stats' => 1048576,  // Доступ к статистике групп и приложений (1 << 20)
     ];
 
     /**
@@ -79,6 +80,14 @@ class TokenCheck extends Command
             'required' => false,
             'check' => 'checkOffline',
             'bitmask' => self::PERMISSION_BITMASKS['offline'],
+        ],
+        'stats' => [
+            'method' => 'stats.get',
+            'params' => [],
+            'description' => 'Доступ к статистике групп (stats)',
+            'required' => false,
+            'check' => 'checkStats',
+            'bitmask' => self::PERMISSION_BITMASKS['stats'],
         ],
     ];
 
@@ -386,6 +395,30 @@ class TokenCheck extends Command
         // Для простоты считаем, что если токен валиден, он может быть offline
         try {
             return VkApiTestService::isTokenValid();
+        } catch (\Exception $e) {
+            return false;
+        }
+    }
+
+    /**
+     * Проверка права stats через битовую маску account.getAppPermissions
+     * (без вызова stats.get, чтобы не требовать group_id в тестовом запросе)
+     */
+    protected function checkStats(): bool
+    {
+        try {
+            $permissionsResult = VkApiTestService::getAppPermissions(
+                $this->option('user-id') ? (int)$this->option('user-id') : null
+            );
+
+            if (!$permissionsResult['success'] || $permissionsResult['bitmask'] === null) {
+                return false;
+            }
+
+            return VkApiTestService::hasPermission(
+                (int)$permissionsResult['bitmask'],
+                self::PERMISSION_BITMASKS['stats']
+            );
         } catch (\Exception $e) {
             return false;
         }

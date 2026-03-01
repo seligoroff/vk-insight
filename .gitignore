@@ -6,6 +6,7 @@
 .env
 .env.backup
 .env.*.local
+.env.testing
 
 # User configuration files
 /resources/vk-groups.csv

@@ -136,8 +136,8 @@ class Analytics extends Command
             $this->warn('Не удалось получить информацию о группе: ' . $e->getMessage());
         }
         
-        $membersCount = $groupInfo['members_count'] ?? 0;
-        $ownerName = $groupInfo['name'] ?? $groupInfo['screen_name'] ?? null;
+        $membersCount = ($groupInfo !== null && isset($groupInfo['members_count'])) ? $groupInfo['members_count'] : 0;
+        $ownerName = ($groupInfo !== null) ? ($groupInfo['name'] ?? $groupInfo['screen_name'] ?? null) : null;
         
         // Получение исторических данных о подписчиках через stats.get (если включена опция)
         $historicalMembersCount = null;
@@ -649,6 +649,7 @@ class Analytics extends Command
             'avg_comments' => $avgComments,
             'avg_er' => $avgER,
             'total_engagement' => $totalEngagement,
+            'members_count' => $membersCount,
         ];
     }
 

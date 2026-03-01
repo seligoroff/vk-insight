@@ -20,9 +20,10 @@ class StatsGet extends Command
                             {--from= : Дата начала периода (обязательный, формат: YYYY-MM-DD)}
                             {--to= : Дата окончания периода (опциональный, по умолчанию текущая дата, формат: YYYY-MM-DD)}
                             {--interval=day : Интервал группировки: day, week, month, year, all}
-                            {--format=table : Формат вывода: table, json, csv}
+                            {--format=table : Формат вывода: table, json, csv, markdown}
                             {--output= : Путь к файлу для сохранения результатов (опциональный)}
-                            {--extended : Расширенная статистика}';
+                            {--extended : Расширенная статистика}
+                            {--verbose-raw : Показать сырой ответ VK API в JSON}';
 
     /**
      * The console command description.
@@ -57,9 +58,9 @@ class StatsGet extends Command
 
         // Парсинг дат
         try {
-            $fromTimestamp = $this->parseDate($this->option('from'));
+            $fromTimestamp = $this->parseDate($this->option('from'), false);
             $toTimestamp = $this->option('to') 
-                ? $this->parseDate($this->option('to'))
+                ? $this->parseDate($this->option('to'), true)
                 : time();
         } catch (\Exception $e) {
             $this->error('Ошибка парсинга даты: ' . $e->getMessage());
@@ -90,8 +91,8 @@ class StatsGet extends Command
 
         // Валидация формата
         $format = $this->option('format');
-        if (!in_array($format, ['table', 'json', 'csv'])) {
-            $this->error('Неверный формат. Допустимые значения: table, json, csv');
+        if (!in_array($format, ['table', 'json', 'csv', 'markdown'])) {
+            $this->error('Неверный формат. Допустимые значения: table, json, csv, markdown');
             return 1;
         }
 
@@ -129,12 +130,38 @@ class StatsGet extends Command
                 return 0;
             }
 
+            // VK API иногда возвращает интервалы за пределами запрошенного диапазона
+            // (особенно для interval=month/year). Жестко ограничиваем результат рамками --from/--to.
+            $originalCount = count($response);
+            $response = $this->filterStatsByDateRange($response, $fromTimestamp, $toTimestamp);
+            if ($originalCount !== count($response)) {
+                $this->warn("VK API вернул {$originalCount} периодов, отфильтровано до " . count($response) . " по диапазону дат.");
+            }
+
+            if ($this->option('verbose-raw')) {
+                $this->newLine();
+                $this->info('=== Сырой ответ VK API (stats.get) ===');
+                $this->line($this->formatJson($response));
+                $this->newLine();
+            }
+
             // Форматируем и выводим результаты
             $outputPath = $this->option('output');
             
             if ($outputPath) {
-                $output = $this->formatOutput($response, $format);
-                $this->saveToFile($output, $outputPath, $format);
+                $saveFormat = $format;
+                $extension = strtolower(pathinfo($outputPath, PATHINFO_EXTENSION));
+
+                if ($extension === 'json') {
+                    $saveFormat = 'json';
+                } elseif ($extension === 'csv') {
+                    $saveFormat = 'csv';
+                } elseif (in_array($extension, ['md', 'markdown'])) {
+                    $saveFormat = 'markdown';
+                }
+
+                $output = $this->formatOutputForFile($response, $saveFormat);
+                $this->saveToFile($output, $outputPath, $saveFormat);
             } else {
                 $output = $this->formatOutput($response, $format);
                 if ($format === 'table') {
@@ -170,13 +197,14 @@ class StatsGet extends Command
      * @return int Unix timestamp
      * @throws \Exception
      */
-    private function parseDate(string $dateString): int
+    private function parseDate(string $dateString, bool $endOfDay = false): int
     {
         $dateString = trim($dateString);
 
         // Попытка парсинга формата YYYY-MM-DD
         if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $dateString)) {
-            return Carbon::createFromFormat('Y-m-d', $dateString)->startOfDay()->timestamp;
+            $date = Carbon::createFromFormat('Y-m-d', $dateString);
+            return $endOfDay ? $date->endOfDay()->timestamp : $date->startOfDay()->timestamp;
         }
 
         throw new \Exception("Неверный формат даты: {$dateString}. Используйте формат YYYY-MM-DD");
@@ -196,10 +224,25 @@ class StatsGet extends Command
                 return $this->formatJson($stats);
             case 'csv':
                 return $this->formatCsv($stats);
+            case 'markdown':
+                return $this->formatMarkdown($stats);
             case 'table':
             default:
                 return $this->formatTable($stats);
         }
+    }
+
+    /**
+     * Форматирование вывода для сохранения в файл.
+     * Для table-формата в файл сохраняется текстовый отчет.
+     */
+    private function formatOutputForFile(array $stats, string $format): string
+    {
+        if ($format === 'table') {
+            return $this->formatText($stats);
+        }
+
+        return $this->formatOutput($stats, $format);
     }
 
     /**
@@ -393,6 +436,100 @@ class StatsGet extends Command
     }
 
     /**
+     * Форматирование в Markdown
+     */
+    private function formatMarkdown(array $stats): string
+    {
+        if (empty($stats)) {
+            return "# Статистика сообщества\n\nНет данных для отображения.\n";
+        }
+
+        $output = "# Статистика сообщества\n\n";
+
+        foreach ($stats as $period) {
+            $periodFrom = isset($period['period_from']) ? date('Y-m-d H:i', $period['period_from']) : 'N/A';
+            $periodTo = isset($period['period_to']) ? date('Y-m-d H:i', $period['period_to']) : 'N/A';
+
+            $output .= "## Период: {$periodFrom} - {$periodTo}\n\n";
+
+            if (isset($period['visitors'])) {
+                $visitors = $period['visitors'];
+                $output .= "### Посетители\n\n";
+                $output .= "| Метрика | Значение |\n";
+                $output .= "|---|---:|\n";
+                $output .= "| Просмотры | " . ($visitors['views'] ?? 0) . " |\n";
+                $output .= "| Посетители | " . ($visitors['visitors'] ?? 0) . " |\n\n";
+            }
+
+            if (isset($period['reach'])) {
+                $reach = $period['reach'];
+                $output .= "### Охват\n\n";
+                $output .= "| Метрика | Значение |\n";
+                $output .= "|---|---:|\n";
+                $output .= "| Полный охват | " . ($reach['reach'] ?? 0) . " |\n";
+                $output .= "| Охват подписчиков | " . ($reach['reach_subscribers'] ?? 0) . " |\n";
+                $output .= "| Мобильный охват | " . ($reach['mobile_reach'] ?? 0) . " |\n\n";
+            }
+
+            if (isset($period['activity'])) {
+                $activity = $period['activity'];
+                $output .= "### Активность\n\n";
+                $output .= "| Метрика | Значение |\n";
+                $output .= "|---|---:|\n";
+                $output .= "| Лайки | " . ($activity['likes'] ?? 0) . " |\n";
+                $output .= "| Комментарии | " . ($activity['comments'] ?? 0) . " |\n";
+                $output .= "| Репосты | " . ($activity['copies'] ?? 0) . " |\n";
+                $output .= "| Подписались | " . ($activity['subscribed'] ?? 0) . " |\n";
+                $output .= "| Отписались | " . ($activity['unsubscribed'] ?? 0) . " |\n\n";
+            }
+        }
+
+        return $output;
+    }
+
+    /**
+     * Форматирование в простой текст
+     */
+    private function formatText(array $stats): string
+    {
+        if (empty($stats)) {
+            return "Статистика сообщества\n\nНет данных для отображения.\n";
+        }
+
+        $output = "Статистика сообщества\n";
+        $output .= str_repeat('=', 24) . "\n\n";
+
+        foreach ($stats as $period) {
+            $periodFrom = isset($period['period_from']) ? date('Y-m-d H:i', $period['period_from']) : 'N/A';
+            $periodTo = isset($period['period_to']) ? date('Y-m-d H:i', $period['period_to']) : 'N/A';
+            $output .= "Период: {$periodFrom} - {$periodTo}\n";
+
+            if (isset($period['visitors'])) {
+                $visitors = $period['visitors'];
+                $output .= "  Посетители: views=" . ($visitors['views'] ?? 0) . ", visitors=" . ($visitors['visitors'] ?? 0) . "\n";
+            }
+
+            if (isset($period['reach'])) {
+                $reach = $period['reach'];
+                $output .= "  Охват: reach=" . ($reach['reach'] ?? 0) . ", reach_subscribers=" . ($reach['reach_subscribers'] ?? 0) . ", mobile_reach=" . ($reach['mobile_reach'] ?? 0) . "\n";
+            }
+
+            if (isset($period['activity'])) {
+                $activity = $period['activity'];
+                $output .= "  Активность: likes=" . ($activity['likes'] ?? 0)
+                    . ", comments=" . ($activity['comments'] ?? 0)
+                    . ", copies=" . ($activity['copies'] ?? 0)
+                    . ", subscribed=" . ($activity['subscribed'] ?? 0)
+                    . ", unsubscribed=" . ($activity['unsubscribed'] ?? 0) . "\n";
+            }
+
+            $output .= "\n";
+        }
+
+        return $output;
+    }
+
+    /**
      * Сохранение в файл
      *
      * @param string $content
@@ -426,6 +563,29 @@ class StatsGet extends Command
         }
 
         $this->info("Результаты сохранены в файл: {$finalPath} ({$bytesWritten} байт)");
+    }
+
+    /**
+     * Фильтрация ответа stats.get по запрошенному диапазону дат.
+     *
+     * @param array $stats
+     * @param int $fromTimestamp
+     * @param int $toTimestamp
+     * @return array
+     */
+    private function filterStatsByDateRange(array $stats, int $fromTimestamp, int $toTimestamp): array
+    {
+        return array_values(array_filter($stats, function ($period) use ($fromTimestamp, $toTimestamp) {
+            if (!isset($period['period_from'], $period['period_to'])) {
+                return false;
+            }
+
+            $periodFrom = (int) $period['period_from'];
+            $periodTo = (int) $period['period_to'];
+
+            // Оставляем периоды, которые пересекаются с диапазоном [from, to]
+            return $periodFrom <= $toTimestamp && $periodTo >= $fromTimestamp;
+        }));
     }
 }
 

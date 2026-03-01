@@ -45,7 +45,7 @@ php artisan vk:token-get-group
 Используйте специальную ссылку для получения токена. Замените `YOUR_APP_ID` на ваш Application ID:
 
 ```
-https://oauth.vk.com/authorize?client_id=YOUR_APP_ID&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=wall,groups,photos,audio,offline&response_type=token&v=5.122
+https://oauth.vk.com/authorize?client_id=YOUR_APP_ID&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=wall,groups,photos,audio,friends,stats,offline&response_type=token&v=5.122
 ```
 
 **Как использовать:**
@@ -63,12 +63,14 @@ https://oauth.vk.com/authorize?client_id=YOUR_APP_ID&display=page&redirect_uri=h
 - `groups` - доступ к группам - **обязательно**
 - `photos` - доступ к фотографиям (для команд работы с альбомами)
 - `audio` - доступ к аудиозаписям (для команд работы с аудио)
+- `friends` - доступ к друзьям (для команды `vk:likers-core`)
+- `stats` - доступ к статистике групп (для команд `vk:stats-get` и `vk:analytics --use-stats`)
 - `offline` - бессрочный токен (рекомендуется, токен не истечет)
 
 **Пример полной ссылки:**
 Если ваш Application ID = `12345678`, то ссылка будет:
 ```
-https://oauth.vk.com/authorize?client_id=12345678&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=wall,groups,photos,audio,offline&response_type=token&v=5.122
+https://oauth.vk.com/authorize?client_id=12345678&display=page&redirect_uri=https://oauth.vk.com/blank.html&scope=wall,groups,photos,audio,friends,stats,offline&response_type=token&v=5.122
 ```
 
 ### Шаг 4: Проверка токена
@@ -99,12 +101,32 @@ php artisan vk:token-check --token=ваш_токен
 Создайте файл `.env` и настройте следующие параметры:
 
 ```env
+# Настройки базы данных MySQL
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=vk_utils
+DB_USERNAME=your_username
+DB_PASSWORD=your_password
+
+# Настройки VK API
 VK_TOKEN=ваш_токен_vk_api
 VK_API_VERSION=5.122
 VK_VERIFY_SSL=false
 VK_ACCOUNT_BASE_URL=https://vk.com
 VK_ANALYTICS_TIMEZONE=Europe/Moscow
 ```
+
+### Параметры базы данных
+
+- `DB_CONNECTION` - тип подключения к БД (по умолчанию: `mysql`)
+- `DB_HOST` - хост базы данных (по умолчанию: `127.0.0.1`)
+- `DB_PORT` - порт базы данных (по умолчанию: `3306`)
+- `DB_DATABASE` - имя базы данных (обязательный)
+- `DB_USERNAME` - имя пользователя БД (обязательный)
+- `DB_PASSWORD` - пароль пользователя БД (обязательный)
+
+**Важно:** Приложение использует MySQL для хранения данных. SQLite не поддерживается из-за проблем с производительностью при больших объемах данных.
 
 ### Параметры VK API
 
@@ -149,18 +171,21 @@ make vk-groups-file
 ### Резолв короткого имени:
 Можно использовать короткое имя группы (screen name) вместо ID. Инструмент автоматически резолвит его в ID.
 
-## Структура файлов
+## Структура базы данных
 
-```
-resources/
-└── vk-groups.csv          # Список групп (создается вручную)
+Приложение использует MySQL для хранения данных. После выполнения миграций создаются следующие таблицы:
 
-database/
-└── database.sqlite        # SQLite база данных (создается автоматически)
-                           # Содержит таблицы: vk_posts, vk_check_cache
-                           # vk_posts - хранит посты для аналитики и поиска
-                           # vk_check_cache - кеш результатов команды vk:check
-                           #   (включает: post_text, post_date, likes, reposts, members_count, time_since_post)
-```
+- **vk_posts** - хранит посты для аналитики и поиска
+  - Содержит: `post_id`, `owner_id`, `date`, `text`, `likes`, `reposts`, `comments`, `url`
+  - Индексы: по `owner_id`, `date`, составной индекс `(owner_id, date)`
+  
+- **vk_check_cache** - кеш результатов команды `vk:check`
+  - Содержит: `group_name`, `group_id`, `post_text`, `post_date`, `likes`, `reposts`, `members_count`
+  - Индекс: по `group_id`
+
+**Преимущества MySQL:**
+- Лучшая производительность при больших объемах данных
+- Надежность при работе с большими таблицами
+- Отсутствие проблем с I/O ошибками при интенсивной работе
 
 

@@ -23,6 +23,7 @@
 
 - PHP 8.1+ (рекомендуется PHP 8.2+)
 - Composer
+- MySQL 5.7+ или MariaDB 10.3+ (рекомендуется MySQL 8.0+)
 - Токен доступа VK API
 
 ## ⚡ Быстрый старт
@@ -69,6 +70,9 @@ php artisan vk:groups-info
 
 # Получение постов за период
 php artisan vk:posts-get --owner=-12345678 --from=2024-01-01
+
+# Получение постов для всех групп из vk-groups.csv
+php artisan vk:posts-get-all --from="last month"
 
 # Получение списка фотоальбомов
 php artisan vk:albums-get --owner=-12345678

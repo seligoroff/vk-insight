@@ -208,7 +208,7 @@ class CheckReaction extends Command
             if (strpos($e->getMessage(), 'disk I/O error') !== false || 
                 strpos($e->getMessage(), 'malformed') !== false) {
                 if (!$this->dbCorruptedWarningShown) {
-                    $this->warn('База данных повреждена. Кэш недоступен. Запустите: rm database/database.sqlite && php artisan migrate');
+                    $this->warn('База данных повреждена. Кэш недоступен. Проверьте подключение к базе данных и запустите: php artisan migrate');
                     $this->dbCorruptedWarningShown = true;
                 }
                 return false;
@@ -234,7 +234,7 @@ class CheckReaction extends Command
                 strpos($e->getMessage(), 'malformed') !== false) {
                 if (!$this->dbCorruptedWarningShown) {
                     $this->warn('База данных повреждена. Кэш не будет использоваться.');
-                    $this->warn('Для восстановления выполните: rm database/database.sqlite && php artisan migrate');
+                    $this->warn('Для восстановления проверьте подключение к базе данных и выполните: php artisan migrate');
                     $this->dbCorruptedWarningShown = true;
                 }
                 return;
@@ -280,7 +280,7 @@ class CheckReaction extends Command
             if (strpos($e->getMessage(), 'disk I/O error') !== false || 
                 strpos($e->getMessage(), 'malformed') !== false) {
                 if (!$this->dbCorruptedWarningShown) {
-                    $this->warn('База данных повреждена. Кэш не будет сохранен. Запустите: rm database/database.sqlite && php artisan migrate');
+                    $this->warn('База данных повреждена. Кэш не будет сохранен. Проверьте подключение к базе данных и запустите: php artisan migrate');
                     $this->dbCorruptedWarningShown = true;
                 }
                 return;
@@ -324,7 +324,7 @@ class CheckReaction extends Command
             if (strpos($e->getMessage(), 'disk I/O error') !== false || 
                 strpos($e->getMessage(), 'malformed') !== false) {
                 if (!$this->dbCorruptedWarningShown) {
-                    $this->warn('База данных повреждена. Кэш недоступен. Запустите: rm database/database.sqlite && php artisan migrate');
+                    $this->warn('База данных повреждена. Кэш недоступен. Проверьте подключение к базе данных и запустите: php artisan migrate');
                     $this->dbCorruptedWarningShown = true;
                 }
                 return [];

@@ -61,6 +61,28 @@ php artisan vk:posts-get --owner=-12345678 --from=2024-01-01 --db --clear
 php artisan vk:posts-get --owner=-12345678 --from=2024-01-01 --min-likes=10
 ```
 
+## Массовое получение постов для всех групп
+
+```bash
+# Получить посты за последний месяц для всех групп из vk-groups.csv
+php artisan vk:posts-get-all --from="last month"
+
+# Получить посты за конкретный период для всех групп
+php artisan vk:posts-get-all --from=2024-01-01 --to=2024-01-31
+
+# С увеличенной задержкой между запросами (для избежания rate limiting)
+php artisan vk:posts-get-all --from=2024-01-01 --delay=0.5
+
+# С подробным выводом ошибок
+php artisan vk:posts-get-all --from=2024-01-01 --verbose
+```
+
+**Примечание:** Команда `vk:posts-get-all` автоматически:
+- Читает список групп из `resources/vk-groups.csv`
+- Для каждой группы очищает старые посты и загружает новые за указанный период
+- Сохраняет посты в базу данных
+- Показывает progress bar и итоговую статистику
+
 ## Работа с несколькими группами одновременно
 
 ```bash
@@ -145,6 +167,38 @@ php artisan vk:word конференция --owner=-12345678 --from=2024-01-01 -
 php artisan vk:word концерт --owner=-12345678 --from=2024-01-01 --db --format=json --output=concert_stats.json
 php artisan vk:word выставка --owner=-12345678 --from=2024-01-01 --db --format=json --output=exhibition_stats.json
 php artisan vk:word мастер-класс --owner=-12345678 --from=2024-01-01 --db --format=json --output=workshop_stats.json
+```
+
+## Статистика сообщества (`stats.get`)
+
+```bash
+# Базовая статистика за месяц
+php artisan vk:stats-get --group-id=12345678 --from=2025-01-01 --to=2025-01-31
+
+# По месяцам за полгода с демографией
+php artisan vk:stats-get --group-id=12345678 --from=2025-09-01 --to=2026-03-01 --interval=month --extended
+
+# Диагностика: вывести сырой ответ VK API
+php artisan vk:stats-get --group-id=12345678 --from=2025-09-01 --to=2026-03-01 --interval=month --extended --verbose-raw --format=json
+
+# Сохранить отчет в Markdown
+php artisan vk:stats-get --group-id=12345678 --from=2025-09-01 --to=2026-03-01 --interval=month --extended --output=reports/group_stats.md
+```
+
+## Ядро лайкнувших пост
+
+```bash
+# Базовый расчет ядра (k=1)
+php artisan vk:likers-core --owner=-12345678 --post=12345
+
+# Более плотное ядро (минимум 2 связи внутри лайкнувших)
+php artisan vk:likers-core --owner=-12345678 --post=12345 --k=2
+
+# Сохранить подробный отчет в JSON
+php artisan vk:likers-core --owner=-12345678 --post=12345 --k=2 --format=json --output=reports/likers_core.json
+
+# Сохранить читабельный отчет в Markdown
+php artisan vk:likers-core --owner=-12345678 --post=12345 --k=2 --output=reports/likers_core.md
 ```
 
 **Примеры использования результатов:**

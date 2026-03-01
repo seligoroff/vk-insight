@@ -22,7 +22,7 @@ class GetPosts extends Command
                             {--to= : Дата окончания периода (опциональный, по умолчанию текущая дата)}
                             {--format=table : Формат вывода: table, json, csv}
                             {--output= : Путь к файлу для сохранения результатов (опциональный)}
-                            {--db : Сохранить результаты в SQLite базу данных (вместо файла)}
+                            {--db : Сохранить результаты в базу данных (вместо файла)}
                             {--update : Обновить существующие записи в БД (только с --db)}
                             {--clear : Очистить таблицу перед вставкой (только с --db)}
                             {--with-text-only : Показывать только посты с текстом}
@@ -189,7 +189,7 @@ class GetPosts extends Command
             return ($b->date ?? 0) - ($a->date ?? 0);
         });
 
-        // Сохранение в SQLite базу данных
+        // Сохранение в базу данных
         if ($this->option('db')) {
             $this->saveToDatabase($filteredPosts);
         } elseif ($this->option('output')) {
@@ -455,7 +455,7 @@ class GetPosts extends Command
     }
 
     /**
-     * Сохранение постов в SQLite базу данных
+     * Сохранение постов в базу данных
      *
      * @param array $posts
      * @return void

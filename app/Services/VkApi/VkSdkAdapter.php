@@ -69,6 +69,26 @@ class VkSdkAdapter
     }
 
     /**
+     * Get friends API methods
+     *
+     * @return \VK\Api\Friends
+     */
+    public function friends()
+    {
+        return $this->client->friends();
+    }
+
+    /**
+     * Get likes API methods
+     *
+     * @return \VK\Api\Likes
+     */
+    public function likes()
+    {
+        return $this->client->likes();
+    }
+
+    /**
      * Get photos API methods
      * 
      * @return \VK\Api\Photos
